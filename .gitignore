@@ -11,5 +11,6 @@ __pycache__/
 data/
 note.txt
 
+qlib_pipeline.ipynb
 02LinnearModelStrategies.ipynb
 03FundamentalAnalysis.ipynb
