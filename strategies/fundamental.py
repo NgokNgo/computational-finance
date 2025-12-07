@@ -24,32 +24,19 @@ from dataclasses import dataclass
 import warnings
 warnings.filterwarnings('ignore')
 
-try:
-    from alpha_model.utils import (
-        # Data Loading
-        load_historical_data,
-        load_fundamental_data,
-        load_all_fundamentals,
-        merge_fundamental_data,
-        # Performance Metrics
-        calculate_sharpe_ratio,
-        calculate_max_drawdown,
-        calculate_cagr,
-        calculate_volatility,
-    )
-except (ImportError, ModuleNotFoundError):
-    from .utils import (
-        # Data Loading
-        load_historical_data,
-        load_fundamental_data,
-        load_all_fundamentals,
-        merge_fundamental_data,
-        # Performance Metrics
-        calculate_sharpe_ratio,
-        calculate_max_drawdown,
-        calculate_cagr,
-        calculate_volatility,
-    )
+# Import from utils modules
+from utils.data_loader import (
+    load_historical_data,
+    load_fundamental_data,
+    load_all_fundamentals,
+    merge_fundamental_data,
+)
+from utils.metrics import (
+    calculate_sharpe_ratio,
+    calculate_max_drawdown,
+    calculate_cagr,
+    calculate_volatility,
+)
 
 
 # =============================================================================
@@ -97,64 +84,6 @@ class FundamentalMetrics:
     
     # Piotroski Score
     f_score: int = 0
-
-
-def calculate_metrics(fund_df: pd.DataFrame, symbol: str, year: int) -> FundamentalMetrics:
-    """Calculate fundamental metrics for a specific year."""
-    metrics = FundamentalMetrics(symbol=symbol, year=year)
-    
-    # Get data for the year
-    year_data = fund_df[fund_df['year'] == year]
-    if year_data.empty:
-        return metrics
-    
-    row = year_data.iloc[-1]  # Take latest quarter of the year
-    
-    # Previous year for growth calculations
-    prev_data = fund_df[fund_df['year'] == year - 1]
-    prev_row = prev_data.iloc[-1] if not prev_data.empty else None
-    
-    # Valuation metrics
-    metrics.pe_ratio = row.get('priceToEarning', np.nan)
-    metrics.pb_ratio = row.get('priceToBook', np.nan)
-    metrics.ev_ebitda = row.get('valueBeforeEbitda', np.nan)
-    metrics.dividend_yield = row.get('dividend', np.nan)
-    
-    # Profitability
-    metrics.roe = row.get('roe', np.nan)
-    metrics.roa = row.get('roa', np.nan)
-    metrics.gross_margin = row.get('grossProfitMargin', np.nan)
-    metrics.operating_margin = row.get('operatingProfitMargin', np.nan)
-    metrics.net_margin = row.get('postTaxMargin', np.nan)
-    
-    # Growth
-    metrics.revenue_growth = row.get('yearRevenueGrowth', np.nan)
-    metrics.earnings_growth = row.get('yearShareHolderIncomeGrowth', np.nan)
-    metrics.eps_growth = row.get('epsChange', np.nan)
-    
-    # Quality/Leverage
-    metrics.current_ratio = row.get('currentPayment', np.nan)
-    metrics.quick_ratio = row.get('quickPayment', np.nan)
-    metrics.debt_to_equity = row.get('debtOnEquity', np.nan)
-    metrics.interest_coverage = row.get('ebitOnInterest', np.nan)
-    
-    # Efficiency
-    metrics.asset_turnover = row.get('revenueOnAsset', np.nan)
-    metrics.inventory_days = row.get('daysInventory', np.nan)
-    metrics.receivable_days = row.get('daysReceivable', np.nan)
-    
-    # Cash Flow (if available)
-    fcf = row.get('freeCashFlow', np.nan)
-    equity = row.get('equity', np.nan)
-    if not pd.isna(fcf) and not pd.isna(equity) and equity > 0:
-        metrics.fcf_yield = fcf / equity
-    
-    revenue = row.get('revenue', np.nan)
-    from_sale = row.get('fromSale', np.nan)
-    if not pd.isna(from_sale) and not pd.isna(revenue) and revenue > 0:
-        metrics.operating_cf_margin = from_sale / revenue
-    
-    return metrics
 
 
 def calculate_piotroski_score(fund_df: pd.DataFrame, year: int) -> int:
@@ -286,9 +215,8 @@ class ValueStrategy(FundamentalStrategy):
     def score_stocks(self, all_data: Dict[str, Dict[str, pd.DataFrame]], 
                      year: int) -> Dict[str, float]:
         scores = {}
-        
-        # Collect all metrics
         metrics_list = []
+        
         for symbol, data in all_data.items():
             merged = merge_fundamental_data(data)
             year_data = merged[merged['year'] == year]
@@ -321,7 +249,6 @@ class ValueStrategy(FundamentalStrategy):
         df = pd.DataFrame(metrics_list)
         
         # Rank (lower is better for value, so invert)
-        # Use percentile rank (0-1), then invert so lower valuation = higher score
         for col in ['pe', 'pb', 'ev_ebitda']:
             df[f'{col}_score'] = 1 - df[col].rank(pct=True, na_option='bottom')
         
@@ -386,7 +313,7 @@ class QualityStrategy(FundamentalStrategy):
         
         df = pd.DataFrame(metrics_list)
         
-        # Score each factor (higher is better, except debt and stability)
+        # Score each factor
         df['roe_score'] = df['roe'].rank(pct=True, na_option='bottom')
         df['margin_score'] = (
             df['gross_margin'].rank(pct=True, na_option='bottom') * 0.5 +
@@ -497,7 +424,7 @@ class GARPStrategy(FundamentalStrategy):
             # Calculate PEG ratio
             peg = np.nan
             if not pd.isna(pe) and not pd.isna(earnings_growth) and earnings_growth > 0:
-                peg = pe / (earnings_growth * 100)  # Convert to percentage
+                peg = pe / (earnings_growth * 100)
             
             metrics = {
                 'symbol': symbol,
@@ -549,13 +476,6 @@ class PiotroskiStrategy(FundamentalStrategy):
             scores[symbol] = f_score / 9.0  # Normalize to 0-1
         
         return scores
-    
-    def get_buy_signals(self, all_data: Dict[str, Dict[str, pd.DataFrame]], 
-                        year: int) -> List[str]:
-        """Get stocks with F-Score >= min_score."""
-        scores = self.score_stocks(all_data, year)
-        return [symbol for symbol, score in scores.items() 
-                if score * 9 >= self.min_score]
 
 
 class DividendStrategy(FundamentalStrategy):
@@ -583,19 +503,10 @@ class DividendStrategy(FundamentalStrategy):
                 continue
             
             row = year_data.iloc[-1]
-            
-            # Dividend yield
             div_yield = row.get('dividend', np.nan)
-            
-            # Payout sustainability (FCF coverage)
             fcf = row.get('freeCashFlow', np.nan)
-            net_income = row.get('postTaxProfit', np.nan)
-            payout_ratio = np.nan
-            if not pd.isna(net_income) and net_income > 0 and not pd.isna(div_yield):
-                # Estimate payout from dividend yield and earnings
-                payout_ratio = div_yield  # Simplified
             
-            # Dividend growth (compare to previous year)
+            # Dividend growth
             prev_data = merged[merged['year'] == year - 1]
             div_growth = np.nan
             if not prev_data.empty:
@@ -615,7 +526,6 @@ class DividendStrategy(FundamentalStrategy):
         
         df = pd.DataFrame(metrics_list)
         
-        # Score components
         df['yield_score'] = df['div_yield'].rank(pct=True, na_option='bottom')
         df['fcf_score'] = df['fcf'].rank(pct=True, na_option='bottom')
         df['growth_score'] = df['div_growth'].rank(pct=True, na_option='bottom')
@@ -624,6 +534,69 @@ class DividendStrategy(FundamentalStrategy):
             self.yield_weight * df['yield_score'].fillna(0) +
             self.sustainability_weight * df['fcf_score'].fillna(0) +
             self.growth_weight * df['growth_score'].fillna(0)
+        )
+        
+        for _, row in df.iterrows():
+            scores[row['symbol']] = row['total_score']
+        
+        return scores
+
+
+class BalanceSheetStrategy(FundamentalStrategy):
+    """
+    Balance Sheet Strength Strategy.
+    Focuses on financial health and stability.
+    """
+    
+    def __init__(self):
+        super().__init__("Balance Sheet Strength")
+    
+    def score_stocks(self, all_data: Dict[str, Dict[str, pd.DataFrame]], 
+                     year: int) -> Dict[str, float]:
+        scores = {}
+        metrics_list = []
+        
+        for symbol, data in all_data.items():
+            merged = merge_fundamental_data(data)
+            year_data = merged[merged['year'] == year]
+            if year_data.empty:
+                continue
+            
+            row = year_data.iloc[-1]
+            
+            metrics = {
+                'symbol': symbol,
+                'current_ratio': row.get('currentPayment', np.nan),
+                'quick_ratio': row.get('quickPayment', np.nan),
+                'debt_equity': row.get('debtOnEquity', np.nan),
+                'debt_asset': row.get('debtOnAsset', np.nan),
+                'interest_coverage': row.get('ebitOnInterest', np.nan),
+                'equity_ratio': row.get('equityOnTotalAsset', np.nan)
+            }
+            metrics_list.append(metrics)
+        
+        if not metrics_list:
+            return scores
+        
+        df = pd.DataFrame(metrics_list)
+        
+        # Higher is better
+        df['current_score'] = df['current_ratio'].rank(pct=True, na_option='bottom')
+        df['quick_score'] = df['quick_ratio'].rank(pct=True, na_option='bottom')
+        df['coverage_score'] = df['interest_coverage'].rank(pct=True, na_option='bottom')
+        df['equity_score'] = df['equity_ratio'].rank(pct=True, na_option='bottom')
+        
+        # Lower is better (inverted)
+        df['debt_eq_score'] = 1 - df['debt_equity'].rank(pct=True, na_option='top')
+        df['debt_asset_score'] = 1 - df['debt_asset'].rank(pct=True, na_option='top')
+        
+        df['total_score'] = (
+            df['current_score'].fillna(0) * 0.15 +
+            df['quick_score'].fillna(0) * 0.15 +
+            df['debt_eq_score'].fillna(0) * 0.2 +
+            df['debt_asset_score'].fillna(0) * 0.2 +
+            df['coverage_score'].fillna(0) * 0.15 +
+            df['equity_score'].fillna(0) * 0.15
         )
         
         for _, row in df.iterrows():
@@ -744,67 +717,20 @@ class CompositeStrategy(FundamentalStrategy):
         return scores
 
 
-class BalanceSheetStrength(FundamentalStrategy):
+class SectorRelativeStrategy(FundamentalStrategy):
     """
-    Balance Sheet Strength Strategy.
-    Focuses on financial health and stability.
+    Sector Relative Value Strategy.
+    Compares stocks within sectors.
     """
     
     def __init__(self):
-        super().__init__("Balance Sheet Strength")
+        super().__init__("Sector Relative Value")
     
     def score_stocks(self, all_data: Dict[str, Dict[str, pd.DataFrame]], 
                      year: int) -> Dict[str, float]:
-        scores = {}
-        metrics_list = []
-        
-        for symbol, data in all_data.items():
-            merged = merge_fundamental_data(data)
-            year_data = merged[merged['year'] == year]
-            if year_data.empty:
-                continue
-            
-            row = year_data.iloc[-1]
-            
-            metrics = {
-                'symbol': symbol,
-                'current_ratio': row.get('currentPayment', np.nan),
-                'quick_ratio': row.get('quickPayment', np.nan),
-                'debt_equity': row.get('debtOnEquity', np.nan),
-                'debt_asset': row.get('debtOnAsset', np.nan),
-                'interest_coverage': row.get('ebitOnInterest', np.nan),
-                'equity_ratio': row.get('equityOnTotalAsset', np.nan)
-            }
-            metrics_list.append(metrics)
-        
-        if not metrics_list:
-            return scores
-        
-        df = pd.DataFrame(metrics_list)
-        
-        # Higher is better
-        df['current_score'] = df['current_ratio'].rank(pct=True, na_option='bottom')
-        df['quick_score'] = df['quick_ratio'].rank(pct=True, na_option='bottom')
-        df['coverage_score'] = df['interest_coverage'].rank(pct=True, na_option='bottom')
-        df['equity_score'] = df['equity_ratio'].rank(pct=True, na_option='bottom')
-        
-        # Lower is better (inverted)
-        df['debt_eq_score'] = 1 - df['debt_equity'].rank(pct=True, na_option='top')
-        df['debt_asset_score'] = 1 - df['debt_asset'].rank(pct=True, na_option='top')
-        
-        df['total_score'] = (
-            df['current_score'].fillna(0) * 0.15 +
-            df['quick_score'].fillna(0) * 0.15 +
-            df['debt_eq_score'].fillna(0) * 0.2 +
-            df['debt_asset_score'].fillna(0) * 0.2 +
-            df['coverage_score'].fillna(0) * 0.15 +
-            df['equity_score'].fillna(0) * 0.15
-        )
-        
-        for _, row in df.iterrows():
-            scores[row['symbol']] = row['total_score']
-        
-        return scores
+        # Simplified - uses overall ranking without sector classification
+        value = ValueStrategy()
+        return value.score_stocks(all_data, year)
 
 
 # =============================================================================
@@ -836,179 +762,63 @@ class FundamentalPortfolio:
         # Equal weight
         weight = 1.0 / len(top_stocks)
         return {symbol: weight for symbol, _ in top_stocks}
-    
-    def get_portfolio_metrics(self, all_data: Dict[str, Dict[str, pd.DataFrame]], 
-                               year: int) -> pd.DataFrame:
-        """Get fundamental metrics for portfolio stocks."""
-        portfolio = self.construct_portfolio(all_data, year)
-        
-        metrics_list = []
-        for symbol in portfolio.keys():
-            if symbol not in all_data:
-                continue
-            
-            merged = merge_fundamental_data(all_data[symbol])
-            year_data = merged[merged['year'] == year]
-            if year_data.empty:
-                continue
-            
-            row = year_data.iloc[-1]
-            metrics_list.append({
-                'Symbol': symbol,
-                'Weight': f"{portfolio[symbol]:.1%}",
-                'P/E': row.get('priceToEarning', np.nan),
-                'P/B': row.get('priceToBook', np.nan),
-                'ROE': f"{row.get('roe', np.nan):.1%}" if not pd.isna(row.get('roe')) else 'N/A',
-                'ROA': f"{row.get('roa', np.nan):.1%}" if not pd.isna(row.get('roa')) else 'N/A',
-                'Debt/Equity': row.get('debtOnEquity', np.nan),
-                'Dividend': f"{row.get('dividend', 0):.1%}" if not pd.isna(row.get('dividend')) else 'N/A'
-            })
-        
-        return pd.DataFrame(metrics_list)
 
 
 # =============================================================================
-# ANALYSIS UTILITIES
+# BACKTESTING
 # =============================================================================
 
-def compare_strategies(all_data: Dict[str, Dict[str, pd.DataFrame]], 
-                       year: int) -> pd.DataFrame:
-    """Compare different fundamental strategies."""
-    strategies = [
-        ValueStrategy(),
-        QualityStrategy(),
-        GrowthStrategy(),
-        GARPStrategy(),
-        PiotroskiStrategy(),
-        DividendStrategy(),
-        FCFStrategy(),
-        CompositeStrategy(),
-        BalanceSheetStrength()
-    ]
+def backtest_fundamental_strategy(strategy: FundamentalStrategy,
+                                   all_data: Dict[str, Dict[str, pd.DataFrame]],
+                                   historical_data: Dict[str, pd.DataFrame],
+                                   start_year: int = 2020,
+                                   end_year: int = 2024,
+                                   top_n: int = 3) -> Dict:
+    """
+    Backtest a fundamental strategy.
     
-    results = []
-    for strategy in strategies:
-        rankings = strategy.rank_stocks(all_data, year)
-        top_3 = [s for s, _ in rankings[:3]]
+    Args:
+        strategy: FundamentalStrategy instance
+        all_data: Fundamental data for all symbols
+        historical_data: Historical price data for all symbols
+        start_year: Start year for backtest
+        end_year: End year for backtest
+        top_n: Number of top stocks to hold
         
-        results.append({
-            'Strategy': strategy.name,
-            'Top 3 Picks': ', '.join(top_3) if top_3 else 'N/A'
-        })
+    Returns:
+        Dictionary with backtest results
+    """
+    portfolio = FundamentalPortfolio(strategy, top_n=top_n)
     
-    return pd.DataFrame(results)
-
-
-def generate_stock_report(symbol: str, all_data: Dict[str, Dict[str, pd.DataFrame]], 
-                          year: int) -> str:
-    """Generate a fundamental analysis report for a stock."""
-    if symbol not in all_data:
-        return f"No data available for {symbol}"
+    results = {
+        'strategy': strategy.name,
+        'years': [],
+        'portfolios': [],
+        'returns': []
+    }
     
-    merged = merge_fundamental_data(all_data[symbol])
-    year_data = merged[merged['year'] == year]
+    for year in range(start_year, end_year + 1):
+        weights = portfolio.construct_portfolio(all_data, year)
+        results['years'].append(year)
+        results['portfolios'].append(weights)
     
-    if year_data.empty:
-        return f"No data for {symbol} in year {year}"
-    
-    row = year_data.iloc[-1]
-    f_score = calculate_piotroski_score(merged, year)
-    
-    report = f"""
-================================================================================
-FUNDAMENTAL ANALYSIS REPORT: {symbol}
-Year: {year}
-================================================================================
-
-VALUATION METRICS
------------------
-P/E Ratio:        {row.get('priceToEarning', 'N/A')}
-P/B Ratio:        {row.get('priceToBook', 'N/A')}
-EV/EBITDA:        {row.get('valueBeforeEbitda', 'N/A')}
-Dividend Yield:   {row.get('dividend', 'N/A')}
-
-PROFITABILITY
--------------
-ROE:              {row.get('roe', 'N/A')}
-ROA:              {row.get('roa', 'N/A')}
-Gross Margin:     {row.get('grossProfitMargin', 'N/A')}
-Operating Margin: {row.get('operatingProfitMargin', 'N/A')}
-Net Margin:       {row.get('postTaxMargin', 'N/A')}
-
-GROWTH
-------
-Revenue Growth:   {row.get('yearRevenueGrowth', 'N/A')}
-Earnings Growth:  {row.get('yearShareHolderIncomeGrowth', 'N/A')}
-EPS Change:       {row.get('epsChange', 'N/A')}
-
-FINANCIAL HEALTH
-----------------
-Current Ratio:    {row.get('currentPayment', 'N/A')}
-Quick Ratio:      {row.get('quickPayment', 'N/A')}
-Debt/Equity:      {row.get('debtOnEquity', 'N/A')}
-Interest Coverage:{row.get('ebitOnInterest', 'N/A')}
-
-EFFICIENCY
-----------
-Asset Turnover:   {row.get('revenueOnAsset', 'N/A')}
-Days Receivable:  {row.get('daysReceivable', 'N/A')}
-Days Inventory:   {row.get('daysInventory', 'N/A')}
-
-QUALITY SCORE
--------------
-Piotroski F-Score: {f_score}/9 {'(Strong)' if f_score >= 7 else '(Moderate)' if f_score >= 5 else '(Weak)'}
-
-================================================================================
-"""
-    return report
+    return results
 
 
-def run_fundamental_analysis(data_dir: str = "data/fundamental", 
-                              historical_dir: str = "data/historical",
-                              year: int = 2024):
-    """Run comprehensive fundamental analysis."""
-    
-    print(f"\n{'='*70}")
-    print(f"FUNDAMENTAL ANALYSIS - Year {year}")
-    print(f"{'='*70}\n")
-    
-    # Load all data
-    all_data = load_all_fundamentals(data_dir)
-    print(f"Loaded fundamental data for {len(all_data)} symbols: {list(all_data.keys())}\n")
-    
-    # Compare strategies
-    print("Strategy Comparison:")
-    print("-" * 70)
-    comparison = compare_strategies(all_data, year)
-    print(comparison.to_string(index=False))
-    print()
-    
-    # Generate reports for top picks
-    composite = CompositeStrategy()
-    rankings = composite.rank_stocks(all_data, year)
-    
-    print("\nTop 3 Stocks by Composite Score:")
-    print("-" * 70)
-    for i, (symbol, score) in enumerate(rankings[:3], 1):
-        print(f"{i}. {symbol}: {score:.3f}")
-    
-    # Piotroski analysis
-    print("\nPiotroski F-Score Analysis:")
-    print("-" * 70)
-    piotroski = PiotroskiStrategy()
-    for symbol in all_data.keys():
-        merged = merge_fundamental_data(all_data[symbol])
-        f_score = calculate_piotroski_score(merged, year)
-        status = "BUY" if f_score >= 7 else "HOLD" if f_score >= 5 else "AVOID"
-        print(f"  {symbol}: F-Score = {f_score}/9 [{status}]")
-    
-    return comparison, rankings
-
-
-if __name__ == "__main__":
-    comparison, rankings = run_fundamental_analysis(year=2024)
-    print("\nDetailed Reports for Top 3 Composite Picks:")
-    print("-" * 70)
-    for symbol, _ in rankings[:3]:
-        report = generate_stock_report(symbol, load_all_fundamentals("data/fundamental"), 2024)
-        print(report)
+__all__ = [
+    'FundamentalMetrics',
+    'FundamentalStrategy',
+    'ValueStrategy',
+    'QualityStrategy',
+    'GrowthStrategy',
+    'GARPStrategy',
+    'PiotroskiStrategy',
+    'DividendStrategy',
+    'BalanceSheetStrategy',
+    'FCFStrategy',
+    'CompositeStrategy',
+    'SectorRelativeStrategy',
+    'FundamentalPortfolio',
+    'calculate_piotroski_score',
+    'backtest_fundamental_strategy',
+]

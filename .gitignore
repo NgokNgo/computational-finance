@@ -10,3 +10,6 @@ __pycache__/
 # private file
 data/
 note.txt
+
+02LinnearModelStrategies.ipynb
+03FundamentalAnalysis.ipynb

@@ -21,52 +21,27 @@ import pandas as pd
 import numpy as np
 from typing import Dict, List, Tuple, Optional
 import warnings
-import sys
-import os
 warnings.filterwarnings('ignore')
 
-try:
-    from alpha_model.utils import (
-        # Data Loading
-        load_historical_data,
-        load_all_historical as load_all_symbols,
-        # Technical Indicators
-        calculate_returns,
-        calculate_log_returns,
-        calculate_sma,
-        calculate_ema,
-        calculate_rsi,
-        calculate_macd,
-        calculate_obv,
-        calculate_vpt,
-        calculate_mfi,
-        calculate_atr,
-        # Performance Metrics
-        calculate_sharpe_ratio,
-        calculate_max_drawdown,
-        calculate_win_rate,
-    )
-except (ImportError, ModuleNotFoundError):
-    from .utils import (
-        # Data Loading
-        load_historical_data,
-        load_all_historical as load_all_symbols,
-        # Technical Indicators
-        calculate_returns,
-        calculate_log_returns,
-        calculate_sma,
-        calculate_ema,
-        calculate_rsi,
-        calculate_macd,
-        calculate_obv,
-        calculate_vpt,
-        calculate_mfi,
-        calculate_atr,
-        # Performance Metrics
-        calculate_sharpe_ratio,
-        calculate_max_drawdown,
-        calculate_win_rate,
-    )
+# Import from utils modules
+from utils.data_loader import load_historical_data, load_all_historical as load_all_symbols
+from utils.indicators import (
+    calculate_returns,
+    calculate_log_returns,
+    calculate_sma,
+    calculate_ema,
+    calculate_rsi,
+    calculate_macd,
+    calculate_obv,
+    calculate_vpt,
+    calculate_mfi,
+    calculate_atr,
+)
+from utils.metrics import (
+    calculate_sharpe_ratio,
+    calculate_max_drawdown,
+    calculate_win_rate,
+)
 
 
 # =============================================================================
@@ -103,7 +78,7 @@ class MomentumStrategy:
 
 class PriceMomentum(MomentumStrategy):
     """
-    Classic Price Momentum Strategy.
+    Classic Price Momentum Strategy. (long only)
     Buy when price is above its N-period moving average.
     Stronger signal when short MA crosses above long MA.
     """
@@ -157,7 +132,8 @@ class ROCMomentum(MomentumStrategy):
 class RSIMomentum(MomentumStrategy):
     """
     RSI-based Momentum Strategy.
-    Buy when RSI crosses above oversold level, sell when crosses above overbought.
+    Long when RSI breaks out above oversold (crosses up from below 30 to above 30).
+    Exit/Short when RSI breaks down from overbought (crosses down from above 70 to below 70).
     """
     
     def __init__(self, period: int = 14, oversold: int = 30, overbought: int = 70):
@@ -172,17 +148,23 @@ class RSIMomentum(MomentumStrategy):
         df['rsi'] = calculate_rsi(df['adj_close'], self.period)
         
         # Signal logic:
-        # Buy (1) when RSI crosses above oversold
-        # Sell (0) when RSI crosses above overbought
+        # Long (1) when RSI crosses UP through oversold (breakout)
+        # Exit (0) when RSI crosses DOWN through overbought (breakdown)
         # Hold previous position otherwise
         df['signal'] = 0
         position = 0
         
         for i in range(1, len(df)):
-            if df['rsi'].iloc[i] < self.oversold:
-                position = 1  # Buy signal
-            elif df['rsi'].iloc[i] > self.overbought:
-                position = 0  # Sell signal
+            prev_rsi = df['rsi'].iloc[i - 1]
+            curr_rsi = df['rsi'].iloc[i]
+            
+            # Breakout: RSI crosses up from below oversold to above oversold
+            if prev_rsi < self.oversold and curr_rsi >= self.oversold:
+                position = 1  # Long signal
+            # Breakdown: RSI crosses down from above overbought to below overbought
+            elif prev_rsi > self.overbought and curr_rsi <= self.overbought:
+                position = 0  # Exit/Short signal
+                
             df.loc[df.index[i], 'signal'] = position
         
         self.signals = df['signal']
@@ -577,162 +559,20 @@ def compare_strategies(df: pd.DataFrame, strategies: List[MomentumStrategy]) -> 
     return pd.DataFrame(results)
 
 
-# =============================================================================
-# VISUALIZATION
-# =============================================================================
-
-def plot_strategy_performance(result: Dict, figsize: Tuple[int, int] = (14, 10)):
-    """Plot strategy performance charts."""
-    try:
-        import matplotlib.pyplot as plt
-    except ImportError:
-        print("matplotlib not installed. Install with: pip install matplotlib")
-        return
-        
-    df = result['data']
-    
-    fig, axes = plt.subplots(3, 1, figsize=figsize)
-    
-    # Plot 1: Cumulative Returns
-    axes[0].plot(df['date'], df['cumulative_market'], label='Buy & Hold', alpha=0.7)
-    axes[0].plot(df['date'], df['cumulative_strategy_net'], label=result['strategy'], alpha=0.9)
-    axes[0].set_title(f"{result['strategy']} - Cumulative Returns")
-    axes[0].set_ylabel('Cumulative Return')
-    axes[0].legend()
-    axes[0].grid(True, alpha=0.3)
-    
-    # Plot 2: Price and Signals
-    axes[1].plot(df['date'], df['adj_close'], label='Price', alpha=0.7)
-    buy_signals = df[df['signal'].diff() == 1]
-    sell_signals = df[df['signal'].diff() == -1]
-    axes[1].scatter(buy_signals['date'], buy_signals['adj_close'], 
-                   marker='^', color='green', label='Buy', s=50)
-    axes[1].scatter(sell_signals['date'], sell_signals['adj_close'], 
-                   marker='v', color='red', label='Sell', s=50)
-    axes[1].set_title('Price with Buy/Sell Signals')
-    axes[1].set_ylabel('Price')
-    axes[1].legend()
-    axes[1].grid(True, alpha=0.3)
-    
-    # Plot 3: Drawdown
-    cumulative = df['cumulative_strategy_net']
-    rolling_max = cumulative.expanding().max()
-    drawdown = (cumulative - rolling_max) / rolling_max
-    axes[2].fill_between(df['date'], drawdown, 0, alpha=0.5, color='red')
-    axes[2].set_title('Strategy Drawdown')
-    axes[2].set_ylabel('Drawdown')
-    axes[2].set_xlabel('Date')
-    axes[2].grid(True, alpha=0.3)
-    
-    plt.tight_layout()
-    plt.show()
-
-
-# =============================================================================
-# MAIN EXECUTION
-# =============================================================================
-
-def run_momentum_analysis(symbol: str = "VNM", data_dir: str = "data/historical"):
-    """Run comprehensive momentum analysis on a symbol."""
-    
-    print(f"\n{'='*60}")
-    print(f"MOMENTUM STRATEGY ANALYSIS: {symbol}")
-    print(f"{'='*60}\n")
-    
-    # Load data
-    df = load_historical_data(symbol, data_dir)
-    print(f"Loaded {len(df)} rows of data for {symbol}")
-    print(f"Date range: {df['date'].min()} to {df['date'].max()}\n")
-    
-    # Define strategies to test
-    strategies = [
-        PriceMomentum(short_window=20, long_window=50),
-        ROCMomentum(period=12),
-        RSIMomentum(period=14),
-        MACDMomentum(),
-        VolumeWeightedMomentum(),
-        OBVMomentum(),
-        VPTMomentum(),
-        MFIMomentum(),
-        TripleMomentum(),
-        AcceleratingMomentum()
-    ]
-    
-    # Compare strategies
-    comparison = compare_strategies(df, strategies)
-    print("Strategy Comparison:")
-    print("-" * 100)
-    print(comparison.to_string(index=False))
-    print()
-    
-    # Get best strategy
-    best_idx = comparison['Sharpe Ratio'].apply(lambda x: float(x)).idxmax()
-    best_strategy = strategies[best_idx]
-    print(f"\nBest Strategy by Sharpe Ratio: {best_strategy.name}")
-    
-    # Detailed backtest for best strategy
-    result = backtest_strategy(df, best_strategy)
-    
-    print(f"\nDetailed Results for {best_strategy.name}:")
-    print(f"  Total Return: {result['total_return']:.2%}")
-    print(f"  Annual Return: {result['annual_return']:.2%}")
-    print(f"  Volatility: {result['volatility']:.2%}")
-    print(f"  Sharpe Ratio: {result['sharpe_ratio']:.2f}")
-    print(f"  Max Drawdown: {result['max_drawdown']:.2%}")
-    print(f"  Win Rate: {result['win_rate']:.2%}")
-    print(f"  Number of Trades: {int(result['num_trades'])}")
-    
-    return comparison, result
-
-
-def run_portfolio_momentum(data_dir: str = "data/historical", top_n: int = 3):
-    """Run cross-sectional momentum portfolio analysis."""
-    
-    print(f"\n{'='*60}")
-    print("CROSS-SECTIONAL MOMENTUM PORTFOLIO")
-    print(f"{'='*60}\n")
-    
-    # Load all symbols
-    symbols_data = load_all_symbols(data_dir)
-    print(f"Loaded data for {len(symbols_data)} symbols: {list(symbols_data.keys())}\n")
-    
-    # Create portfolio
-    portfolio = MomentumPortfolio(lookback=252, holding_period=21, top_n=top_n)
-    
-    # Get latest date available in all datasets
-    min_dates = [df['date'].max() for df in symbols_data.values()]
-    latest_date = min(min_dates)
-    
-    print(f"Portfolio construction date: {latest_date}")
-    
-    # Calculate current momentum scores
-    scores = portfolio.calculate_momentum_scores(symbols_data, latest_date)
-    
-    print("\nMomentum Scores (12-month return):")
-    print("-" * 40)
-    for symbol, score in sorted(scores.items(), key=lambda x: x[1], reverse=True):
-        print(f"  {symbol}: {score:.2%}")
-    
-    # Get recommended weights
-    weights = portfolio.get_portfolio_weights(symbols_data, latest_date)
-    
-    print(f"\nRecommended Portfolio (Top {top_n}):")
-    print("-" * 40)
-    for symbol, weight in weights.items():
-        print(f"  {symbol}: {weight:.2%}")
-    
-    return scores, weights
-
-
-if __name__ == "__main__":
-    # Run single symbol analysis
-    comparison, best_result = run_momentum_analysis("VNM")
-    
-    # Run portfolio analysis
-    scores, weights = run_portfolio_momentum(top_n=3)
-    
-    # Plot best strategy
-    try:
-        plot_strategy_performance(best_result)
-    except Exception as e:
-        print(f"\nNote: Could not plot (matplotlib may not be installed): {e}")
+__all__ = [
+    'MomentumStrategy',
+    'PriceMomentum',
+    'ROCMomentum',
+    'RSIMomentum',
+    'MACDMomentum',
+    'VolumeWeightedMomentum',
+    'OBVMomentum',
+    'VPTMomentum',
+    'MFIMomentum',
+    'DualMomentum',
+    'TripleMomentum',
+    'AcceleratingMomentum',
+    'MomentumPortfolio',
+    'backtest_strategy',
+    'compare_strategies',
+]
