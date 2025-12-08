@@ -83,6 +83,25 @@ from .transforms import (
     print_data_quality_report,
 )
 
+from .optimize import (
+    # Data splitting
+    train_val_test_split,
+    split_by_date,
+    print_split_info,
+    # Objective functions
+    sharpe_objective,
+    calmar_objective,
+    sortino_objective,
+    combined_objective,
+    # Optimization with Validation
+    optimize_onestock,
+    optimize_universal,
+    walk_forward_optimization,
+    # Robustness
+    parameter_sensitivity_analysis,
+    bootstrap_performance,
+)
+
 __all__ = [
     # Data Loading
     'load_historical_data',
@@ -130,4 +149,17 @@ __all__ = [
     'format_number',
     'check_data_quality',
     'print_data_quality_report',
+    # Optimization with Validation
+    'train_val_test_split',
+    'split_by_date',
+    'print_split_info',
+    'sharpe_objective',
+    'calmar_objective',
+    'sortino_objective',
+    'combined_objective',
+    'optimize_onestock',
+    'optimize_universal',
+    'walk_forward_optimization',
+    'parameter_sensitivity_analysis',
+    'bootstrap_performance',
 ]

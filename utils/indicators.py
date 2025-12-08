@@ -1,17 +1,18 @@
-"""
-Technical Indicators Module
-===========================
+"""Technical Indicators Module.
+
 Common technical indicators used in trading strategies.
 
 Categories:
-- Basic: Returns, Moving Averages, Standard Deviation
-- Momentum: RSI, MACD, Stochastic
-- Volume: OBV, VPT, MFI
-- Volatility: ATR, Bollinger Bands
+    - Basic: Returns, Moving Averages, Standard Deviation
+    - Momentum: RSI, MACD, Stochastic
+    - Volume: OBV, VPT, MFI
+    - Volatility: ATR, Bollinger Bands
 """
 
-import pandas as pd
+from __future__ import annotations
+
 import numpy as np
+import pandas as pd
 from typing import Tuple
 
 
@@ -49,26 +50,23 @@ def calculate_std(series: pd.Series, window: int) -> pd.Series:
 # =============================================================================
 
 def calculate_rsi(prices: pd.Series, period: int = 14) -> pd.Series:
-    """
-    Calculate Relative Strength Index (RSI).
-    
-    RSI = 100 - (100 / (1 + RS))
-    where RS = Average Gain / Average Loss
-    
+    """Calculate Relative Strength Index (RSI).
+
+    RSI = 100 - (100 / (1 + RS)) where RS = Average Gain / Average Loss.
+
     Args:
-        prices: Price series
-        period: Lookback period (default 14)
-        
+        prices: Price series.
+        period: Lookback period (default 14).
+
     Returns:
-        RSI values (0-100)
+        RSI values (0-100).
     """
     delta = prices.diff()
     gain = (delta.where(delta > 0, 0)).rolling(window=period).mean()
     loss = (-delta.where(delta < 0, 0)).rolling(window=period).mean()
-    
+
     rs = gain / loss
-    rsi = 100 - (100 / (1 + rs))
-    return rsi
+    return 100 - (100 / (1 + rs))
 
 
 def calculate_macd(prices: pd.Series, fast: int = 12, slow: int = 26, 
