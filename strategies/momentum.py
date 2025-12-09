@@ -14,7 +14,6 @@ This module implements various momentum-based trading strategies:
 9. Dual Momentum (Absolute + Relative)
 10. Momentum with Volume Confirmation
 
-Author: Computational Finance Project
 """
 
 import pandas as pd
@@ -23,8 +22,7 @@ from typing import Dict, List, Tuple, Optional
 import warnings
 warnings.filterwarnings('ignore')
 
-# Import from utils modules
-from utils.data_loader import load_historical_data, load_all_historical as load_all_symbols
+from strategies.base import BaseStrategy
 from utils.indicators import (
     calculate_returns,
     calculate_log_returns,
@@ -37,46 +35,14 @@ from utils.indicators import (
     calculate_mfi,
     calculate_atr,
 )
-from utils.metrics import (
-    calculate_sharpe_ratio,
-    calculate_max_drawdown,
-    calculate_win_rate,
-)
 
 
 # =============================================================================
 # MOMENTUM STRATEGIES
 # =============================================================================
 
-class MomentumStrategy:
-    """Base class for momentum strategies."""
-    
-    def __init__(self, name: str):
-        self.name = name
-        self.signals = None
-        self.positions = None
-        
-    def generate_signals(self, df: pd.DataFrame) -> pd.DataFrame:
-        """Generate trading signals. Override in subclass."""
-        raise NotImplementedError
-        
-    def calculate_returns(self, df: pd.DataFrame) -> pd.DataFrame:
-        """Calculate strategy returns based on signals."""
-        if self.signals is None:
-            self.generate_signals(df)
-            
-        df = df.copy()
-        df['signal'] = self.signals
-        df['position'] = df['signal'].shift(1)  # Enter position next day
-        df['market_return'] = df['adj_close'].pct_change()
-        df['strategy_return'] = df['position'] * df['market_return']
-        df['cumulative_market'] = (1 + df['market_return']).cumprod()
-        df['cumulative_strategy'] = (1 + df['strategy_return']).cumprod()
-        
-        return df
 
-
-class PriceMomentum(MomentumStrategy):
+class PriceMomentum(BaseStrategy):
     """
     Classic Price Momentum Strategy. (long only)
     Buy when price is above its N-period moving average.
@@ -104,7 +70,7 @@ class PriceMomentum(MomentumStrategy):
         return df
 
 
-class ROCMomentum(MomentumStrategy):
+class ROCMomentum(BaseStrategy):
     """
     Rate of Change (ROC) Momentum Strategy.
     Buy when ROC is positive and above threshold.
@@ -129,7 +95,7 @@ class ROCMomentum(MomentumStrategy):
         return df
 
 
-class RSIMomentum(MomentumStrategy):
+class RSIMomentum(BaseStrategy):
     """
     RSI-based Momentum Strategy.
     Long when RSI breaks out above oversold (crosses up from below 30 to above 30).
@@ -171,7 +137,7 @@ class RSIMomentum(MomentumStrategy):
         return df
 
 
-class MACDMomentum(MomentumStrategy):
+class MACDMomentum(BaseStrategy):
     """
     MACD-based Momentum Strategy.
     Buy when MACD line crosses above signal line.
@@ -197,7 +163,7 @@ class MACDMomentum(MomentumStrategy):
         return df
 
 
-class VolumeWeightedMomentum(MomentumStrategy):
+class VolumeWeightedMomentum(BaseStrategy):
     """
     Volume-Weighted Momentum Strategy.
     Combines price momentum with volume confirmation.
@@ -228,7 +194,7 @@ class VolumeWeightedMomentum(MomentumStrategy):
         return df
 
 
-class OBVMomentum(MomentumStrategy):
+class OBVMomentum(BaseStrategy):
     """
     On-Balance Volume Momentum Strategy.
     Buy when OBV trend is up (OBV > OBV SMA).
@@ -251,7 +217,7 @@ class OBVMomentum(MomentumStrategy):
         return df
 
 
-class VPTMomentum(MomentumStrategy):
+class VPTMomentum(BaseStrategy):
     """
     Volume Price Trend Momentum Strategy.
     Combines price change and volume into a cumulative indicator.
@@ -274,7 +240,7 @@ class VPTMomentum(MomentumStrategy):
         return df
 
 
-class MFIMomentum(MomentumStrategy):
+class MFIMomentum(BaseStrategy):
     """
     Money Flow Index Momentum Strategy.
     Volume-weighted RSI - buy in oversold, sell in overbought.
@@ -307,7 +273,7 @@ class MFIMomentum(MomentumStrategy):
         return df
 
 
-class DualMomentum(MomentumStrategy):
+class DualMomentum(BaseStrategy):
     """
     Dual Momentum Strategy (Gary Antonacci).
     Combines Absolute Momentum (time-series) and Relative Momentum (cross-sectional).
@@ -347,7 +313,7 @@ class DualMomentum(MomentumStrategy):
         return df
 
 
-class TripleMomentum(MomentumStrategy):
+class TripleMomentum(BaseStrategy):
     """
     Triple Momentum Strategy.
     Combines short, medium, and long-term momentum signals.
@@ -380,7 +346,7 @@ class TripleMomentum(MomentumStrategy):
         return df
 
 
-class AcceleratingMomentum(MomentumStrategy):
+class AcceleratingMomentum(BaseStrategy):
     """
     Accelerating Momentum Strategy.
     Looks for stocks where momentum is increasing (momentum of momentum).
@@ -473,94 +439,7 @@ class MomentumPortfolio:
         return weights
 
 
-# =============================================================================
-# BACKTESTING
-# =============================================================================
-
-def backtest_strategy(df: pd.DataFrame, strategy: MomentumStrategy, 
-                      initial_capital: float = 100000,
-                      transaction_cost: float = 0.001) -> Dict:
-    """
-    Backtest a momentum strategy.
-    
-    Args:
-        df: DataFrame with OHLCV data
-        strategy: MomentumStrategy instance
-        initial_capital: Starting capital
-        transaction_cost: Transaction cost as percentage
-        
-    Returns:
-        Dictionary with backtest results
-    """
-    result_df = strategy.generate_signals(df)
-    result_df = strategy.calculate_returns(result_df)
-    
-    # Account for transaction costs
-    result_df['trade'] = result_df['signal'].diff().abs()
-    result_df['tc'] = result_df['trade'] * transaction_cost
-    result_df['strategy_return_net'] = result_df['strategy_return'] - result_df['tc']
-    result_df['cumulative_strategy_net'] = (1 + result_df['strategy_return_net']).cumprod()
-    
-    # Calculate metrics
-    returns = result_df['strategy_return_net'].dropna()
-    
-    total_return = result_df['cumulative_strategy_net'].iloc[-1] - 1
-    annual_return = (1 + total_return) ** (252 / len(returns)) - 1
-    volatility = returns.std() * np.sqrt(252)
-    sharpe_ratio = annual_return / volatility if volatility > 0 else 0
-    
-    # Max drawdown
-    cumulative = result_df['cumulative_strategy_net']
-    rolling_max = cumulative.expanding().max()
-    drawdown = (cumulative - rolling_max) / rolling_max
-    max_drawdown = drawdown.min()
-    
-    # Win rate
-    winning_trades = (returns > 0).sum()
-    total_trades = (returns != 0).sum()
-    win_rate = winning_trades / total_trades if total_trades > 0 else 0
-    
-    # Number of trades
-    num_trades = result_df['trade'].sum() / 2
-    
-    results = {
-        'strategy': strategy.name,
-        'total_return': total_return,
-        'annual_return': annual_return,
-        'volatility': volatility,
-        'sharpe_ratio': sharpe_ratio,
-        'max_drawdown': max_drawdown,
-        'win_rate': win_rate,
-        'num_trades': num_trades,
-        'final_value': initial_capital * (1 + total_return),
-        'data': result_df
-    }
-    
-    return results
-
-
-def compare_strategies(df: pd.DataFrame, strategies: List[MomentumStrategy]) -> pd.DataFrame:
-    """Compare multiple strategies on the same data."""
-    results = []
-    
-    for strategy in strategies:
-        result = backtest_strategy(df, strategy)
-        results.append({
-            'Strategy': result['strategy'],
-            'Total Return': f"{result['total_return']:.2%}",
-            'Annual Return': f"{result['annual_return']:.2%}",
-            'Volatility': f"{result['volatility']:.2%}",
-            'Sharpe Ratio': f"{result['sharpe_ratio']:.2f}",
-            'Max Drawdown': f"{result['max_drawdown']:.2%}",
-            'Win Rate': f"{result['win_rate']:.2%}",
-            'Num Trades': int(result['num_trades'])
-        })
-    
-    return pd.DataFrame(results)
-
-
 __all__ = [
-    'MomentumStrategy',
     'PriceMomentum',
     'ROCMomentum',
     'RSIMomentum',
@@ -572,7 +451,5 @@ __all__ = [
     'DualMomentum',
     'TripleMomentum',
     'AcceleratingMomentum',
-    'MomentumPortfolio',
-    'backtest_strategy',
-    'compare_strategies',
+    'MomentumPortfolio'
 ]

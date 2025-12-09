@@ -43,7 +43,7 @@ def init_qlib(data_dir: str = QLIB_DATA_DIR):
     path = Path(data_dir).expanduser()
     path.mkdir(parents=True, exist_ok=True)
     qlib.init(provider_uri=str(path), region="cn")
-    print(f"✓ Qlib initialized: {path}")
+    print(f"✓ Qlib initialized")
 
 
 def convert_csv_to_qlib(csv_dir: str = "../data/historical", output_dir: str = QLIB_DATA_DIR):
@@ -135,7 +135,6 @@ def convert_csv_to_qlib(csv_dir: str = "../data/historical", output_dir: str = Q
         print(f"  ✓ {symbol}")
     
     print(f"\n✓ Converted {len(symbols_info)} symbols to Qlib format")
-    print(f"  Output: {out_path}")
     return out_path
 
 

@@ -1,38 +1,12 @@
-"""
-Strategies Module
-=================
-Contains all trading strategies organized by category.
-
-Strategy Categories:
-- Momentum: Price momentum, Volume-weighted momentum, RSI, MACD, etc.
-- Fundamental: Value, Quality, Growth, GARP, Piotroski F-Score, etc.
-- Regression: Linear Regression Slope, Channel, Multi-Factor
-- TimeSeries: ARIMA, GARCH, ARIMA-GARCH
-
-Usage:
-    from strategies import (
-        # Momentum
-        PriceMomentum,
-        RSIMomentum,
-        MACDMomentum,
-        # Fundamental
-        ValueStrategy,
-        QualityStrategy,
-        GrowthStrategy,
-        # Regression
-        LinearRegressionSlope,
-        LinearRegressionChannel,
-        MultiFactorRegression,
-        # TimeSeries
-        ARIMAStrategy,
-        GARCHVolatilityStrategy,
-        ARIMAGARCHStrategy,
-    )
-"""
+# Base Strategy Class
+from .base import (
+    BaseStrategy, 
+    backtest_strategy,
+    compare_strategies
+)
 
 # Momentum Strategies
 from .momentum import (
-    MomentumStrategy,
     PriceMomentum,
     ROCMomentum,
     RSIMomentum,
@@ -44,9 +18,7 @@ from .momentum import (
     DualMomentum,
     TripleMomentum,
     AcceleratingMomentum,
-    MomentumPortfolio,
-    backtest_strategy,
-    compare_strategies,
+    MomentumPortfolio
 )
 
 # Fundamental Strategies
@@ -69,20 +41,16 @@ from .fundamental import (
 
 # Regression Strategies
 from .regression import (
-    RegressionStrategy,
     LinearRegressionSlope,
     LinearRegressionChannel,
     MultiFactorRegression,
     linear_regression,
     rolling_linear_regression,
-    multiple_linear_regression,
-    backtest_regression_strategy,
-    compare_regression_strategies,
+    multiple_linear_regression
 )
 
 # Time-Series Strategies
 from .timeseries import (
-    TimeSeriesStrategy,
     ARIMAStrategy,
     GARCHVolatilityStrategy,
     ARIMAGARCHStrategy,
@@ -91,14 +59,15 @@ from .timeseries import (
     rolling_arima_forecast,
     fit_garch,
     garch_forecast,
-    rolling_garch_forecast,
-    backtest_timeseries_strategy,
-    compare_timeseries_strategies,
+    rolling_garch_forecast
 )
 
 __all__ = [
+    # Base
+    'BaseStrategy',
+    'backtest_strategy',
+    'compare_strategies',
     # Momentum
-    'MomentumStrategy',
     'PriceMomentum',
     'ROCMomentum',
     'RSIMomentum',
@@ -111,8 +80,6 @@ __all__ = [
     'TripleMomentum',
     'AcceleratingMomentum',
     'MomentumPortfolio',
-    'backtest_strategy',
-    'compare_strategies',
     # Fundamental
     'FundamentalMetrics',
     'FundamentalStrategy',
@@ -129,17 +96,13 @@ __all__ = [
     'FundamentalPortfolio',
     'backtest_fundamental_strategy',
     # Regression
-    'RegressionStrategy',
     'LinearRegressionSlope',
     'LinearRegressionChannel',
     'MultiFactorRegression',
     'linear_regression',
     'rolling_linear_regression',
     'multiple_linear_regression',
-    'backtest_regression_strategy',
-    'compare_regression_strategies',
     # TimeSeries
-    'TimeSeriesStrategy',
     'ARIMAStrategy',
     'GARCHVolatilityStrategy',
     'ARIMAGARCHStrategy',
@@ -149,6 +112,4 @@ __all__ = [
     'fit_garch',
     'garch_forecast',
     'rolling_garch_forecast',
-    'backtest_timeseries_strategy',
-    'compare_timeseries_strategies',
 ]

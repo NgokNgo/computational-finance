@@ -29,6 +29,7 @@ from arch import arch_model
 from utils.data_loader import load_historical_data, load_all_historical as load_all_symbols
 from utils.indicators import calculate_returns, calculate_sma
 from utils.metrics import calculate_sharpe_ratio, calculate_max_drawdown
+from strategies.base import BaseStrategy
 
 
 # =============================================================================
@@ -220,39 +221,15 @@ def rolling_garch_forecast(returns: pd.Series, p: int = 1, q: int = 1,
 # TIME SERIES STRATEGY BASE CLASS
 # =============================================================================
 
-class TimeSeriesStrategy:
-    """Base class for time-series model strategies."""
-    
-    def __init__(self, name: str):
-        self.name = name
-        self.signals = None
-        self.positions = None
-        
-    def generate_signals(self, df: pd.DataFrame) -> pd.DataFrame:
-        """Generate trading signals. Override in subclass."""
-        raise NotImplementedError
-        
-    def calculate_returns(self, df: pd.DataFrame) -> pd.DataFrame:
-        """Calculate strategy returns based on signals."""
-        if self.signals is None:
-            self.generate_signals(df)
-            
-        df = df.copy()
-        df['signal'] = self.signals
-        df['position'] = df['signal'].shift(1)  # Enter position next day
-        df['market_return'] = df['adj_close'].pct_change()
-        df['strategy_return'] = df['position'] * df['market_return']
-        df['cumulative_market'] = (1 + df['market_return']).cumprod()
-        df['cumulative_strategy'] = (1 + df['strategy_return']).cumprod()
-        
-        return df
+# Backward compatibility alias
+TimeSeriesStrategy = BaseStrategy
 
 
 # =============================================================================
 # STRATEGY 1: ARIMA PRICE FORECAST
 # =============================================================================
 
-class ARIMAStrategy(TimeSeriesStrategy):
+class ARIMAStrategy(BaseStrategy):
     """
     ARIMA Price Forecast Strategy.
     
@@ -468,94 +445,6 @@ class ARIMAGARCHStrategy(TimeSeriesStrategy):
         return df
 
 
-# =============================================================================
-# BACKTESTING FOR TIME SERIES STRATEGIES
-# =============================================================================
-
-def backtest_timeseries_strategy(df: pd.DataFrame, strategy: TimeSeriesStrategy, 
-                                  initial_capital: float = 100000,
-                                  transaction_cost: float = 0.001) -> Dict:
-    """
-    Backtest a time-series model strategy.
-    
-    Args:
-        df: DataFrame with OHLCV data
-        strategy: TimeSeriesStrategy instance
-        initial_capital: Starting capital
-        transaction_cost: Transaction cost as percentage
-        
-    Returns:
-        Dictionary with backtest results
-    """
-    result_df = strategy.generate_signals(df)
-    result_df = strategy.calculate_returns(result_df)
-    
-    # Account for transaction costs
-    result_df['trade'] = result_df['signal'].diff().abs()
-    result_df['tc'] = result_df['trade'] * transaction_cost
-    result_df['strategy_return_net'] = result_df['strategy_return'] - result_df['tc']
-    result_df['cumulative_strategy_net'] = (1 + result_df['strategy_return_net']).cumprod()
-    
-    # Calculate metrics
-    returns = result_df['strategy_return_net'].dropna()
-    
-    total_return = result_df['cumulative_strategy_net'].iloc[-1] - 1
-    n_periods = len(returns)
-    annual_return = (1 + total_return) ** (252 / n_periods) - 1 if n_periods > 0 else 0
-    volatility = returns.std() * np.sqrt(252)
-    sharpe_ratio = annual_return / volatility if volatility > 0 else 0
-    
-    # Max drawdown
-    cumulative = result_df['cumulative_strategy_net']
-    rolling_max = cumulative.expanding().max()
-    drawdown = (cumulative - rolling_max) / rolling_max
-    max_drawdown = drawdown.min()
-    
-    # Win rate
-    winning_trades = (returns > 0).sum()
-    total_trades = (returns != 0).sum()
-    win_rate = winning_trades / total_trades if total_trades > 0 else 0
-    
-    # Number of trades
-    num_trades = result_df['trade'].sum() / 2
-    
-    results = {
-        'strategy': strategy.name,
-        'total_return': total_return,
-        'annual_return': annual_return,
-        'volatility': volatility,
-        'sharpe_ratio': sharpe_ratio,
-        'max_drawdown': max_drawdown,
-        'win_rate': win_rate,
-        'num_trades': num_trades,
-        'final_value': initial_capital * (1 + total_return),
-        'data': result_df
-    }
-    
-    return results
-
-
-def compare_timeseries_strategies(df: pd.DataFrame, 
-                                   strategies: List[TimeSeriesStrategy]) -> pd.DataFrame:
-    """Compare multiple time-series strategies on the same data."""
-    results = []
-    
-    for strategy in strategies:
-        result = backtest_timeseries_strategy(df, strategy)
-        results.append({
-            'Strategy': result['strategy'],
-            'Total Return': f"{result['total_return']:.2%}",
-            'Annual Return': f"{result['annual_return']:.2%}",
-            'Volatility': f"{result['volatility']:.2%}",
-            'Sharpe Ratio': f"{result['sharpe_ratio']:.2f}",
-            'Max Drawdown': f"{result['max_drawdown']:.2%}",
-            'Win Rate': f"{result['win_rate']:.2%}",
-            'Num Trades': int(result['num_trades'])
-        })
-    
-    return pd.DataFrame(results)
-
-
 __all__ = [
     # ARIMA helpers (statsmodels)
     'check_stationarity',
@@ -569,8 +458,5 @@ __all__ = [
     'TimeSeriesStrategy',
     'ARIMAStrategy',
     'GARCHVolatilityStrategy',
-    'ARIMAGARCHStrategy',
-    # Backtesting
-    'backtest_timeseries_strategy',
-    'compare_timeseries_strategies',
+    'ARIMAGARCHStrategy'
 ]
