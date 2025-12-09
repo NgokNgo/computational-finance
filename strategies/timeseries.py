@@ -218,14 +218,6 @@ def rolling_garch_forecast(returns: pd.Series, p: int = 1, q: int = 1,
 
 
 # =============================================================================
-# TIME SERIES STRATEGY BASE CLASS
-# =============================================================================
-
-# Backward compatibility alias
-TimeSeriesStrategy = BaseStrategy
-
-
-# =============================================================================
 # STRATEGY 1: ARIMA PRICE FORECAST
 # =============================================================================
 
@@ -275,7 +267,7 @@ class ARIMAStrategy(BaseStrategy):
 # STRATEGY 2: GARCH VOLATILITY REGIME
 # =============================================================================
 
-class GARCHVolatilityStrategy(TimeSeriesStrategy):
+class GARCHVolatilityStrategy(BaseStrategy):
     """
     GARCH Volatility Regime Strategy.
     
@@ -344,7 +336,7 @@ class GARCHVolatilityStrategy(TimeSeriesStrategy):
 # STRATEGY 3: COMBINED ARIMA-GARCH
 # =============================================================================
 
-class ARIMAGARCHStrategy(TimeSeriesStrategy):
+class ARIMAGARCHStrategy(BaseStrategy):
     """
     Combined ARIMA-GARCH Strategy.
     
@@ -455,7 +447,6 @@ __all__ = [
     'garch_forecast',
     'rolling_garch_forecast',
     # Strategies
-    'TimeSeriesStrategy',
     'ARIMAStrategy',
     'GARCHVolatilityStrategy',
     'ARIMAGARCHStrategy'

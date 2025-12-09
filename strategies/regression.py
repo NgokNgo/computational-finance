@@ -15,11 +15,8 @@ from typing import Dict, List, Tuple
 import warnings
 warnings.filterwarnings('ignore')
 
-from sklearn.linear_model import LinearRegression
 from sklearn.preprocessing import StandardScaler
-from sklearn.metrics import r2_score
 
-from utils.indicators import calculate_returns, calculate_sma, calculate_rsi
 from strategies.base import BaseStrategy
 
 
@@ -27,39 +24,30 @@ from strategies.base import BaseStrategy
 # LINEAR REGRESSION HELPER FUNCTIONS
 # =============================================================================
 
-def linear_regression(y: np.ndarray) -> Tuple[float, float, float]:
-    n = len(y)
+def linear_regression(y: np.ndarray):
+    y = np.asarray(y, dtype=float)
+    n = y.size
     if n < 2:
-        return 0, 0, 0
-    
-    # Prepare features (time index)
-    X = np.arange(n).reshape(-1, 1)
-    
-    # Fit sklearn LinearRegression
-    model = LinearRegression()
-    model.fit(X, y)
-    
-    slope = model.coef_[0]
-    intercept = model.intercept_
-    
-    # Calculate R-squared using sklearn
-    y_pred = model.predict(X)
-    r_squared = r2_score(y, y_pred)
-    
-    return slope, intercept, r_squared
+        return 0.0, 0.0, 0.0, np.full(n, np.nan)
+
+    x = np.arange(n)
+    # Use polyfit for a simple linear fit
+    try:
+        slope, intercept = np.polyfit(x, y, 1)
+        y_pred = slope * x + intercept
+        ss_res = np.sum((y - y_pred) ** 2)
+        ss_tot = np.sum((y - y.mean()) ** 2)
+        r_squared = 1.0 - ss_res / ss_tot if ss_tot > 0 else 0.0
+    except Exception:
+        slope, intercept, r_squared = 0.0, float(y[-1]) if n > 0 else 0.0, 0.0
+        y_pred = np.full(n, intercept)
+
+    return float(slope), float(intercept), float(r_squared), y_pred
 
 
 def rolling_linear_regression(series: pd.Series, window: int) -> pd.DataFrame:
-    """
-    Calculate rolling linear regression statistics using sklearn.
-    
-    Args:
-        series: Price series
-        window: Rolling window size
-        
-    Returns:
-        DataFrame with slope, intercept, r_squared, upper_band, lower_band
-    """
+    # preserve original index so returned DataFrame aligns with input
+    series = series.astype(float)  # ...existing index preserved (no reset_index)
     n = len(series)
     slopes = np.full(n, np.nan)
     intercepts = np.full(n, np.nan)
@@ -67,33 +55,32 @@ def rolling_linear_regression(series: pd.Series, window: int) -> pd.DataFrame:
     reg_values = np.full(n, np.nan)
     upper_bands = np.full(n, np.nan)
     lower_bands = np.full(n, np.nan)
-    
-    # Prepare X for sklearn (time index)
-    X_window = np.arange(window).reshape(-1, 1)
-    
+
+    if window < 2:
+        raise ValueError("window must be >= 2")
+
     for i in range(window - 1, n):
         y = series.iloc[i - window + 1:i + 1].values
-        
-        # Fit sklearn LinearRegression
-        model = LinearRegression()
-        model.fit(X_window, y)
-        
-        slopes[i] = model.coef_[0]
-        intercepts[i] = model.intercept_
-        
-        # Get predictions and R²
-        y_pred = model.predict(X_window)
-        r_squares[i] = r2_score(y, y_pred)
-        
-        # Current regression value (end of line)
-        reg_values[i] = model.predict([[window - 1]])[0]
-        
-        # Calculate standard error for bands
-        std_err = np.std(y - y_pred)
-        
-        upper_bands[i] = reg_values[i] + 2 * std_err
-        lower_bands[i] = reg_values[i] - 2 * std_err
-    
+        try:
+            slope, intercept, r2, y_pred = linear_regression(y)
+            slopes[i] = slope
+            intercepts[i] = intercept
+            r_squares[i] = r2
+
+            # regression predicted value at last point of the window
+            reg_values[i] = float(y_pred[-1])
+
+            # standard error of residuals (sample std)
+            resid = y - y_pred
+            std_err = np.std(resid, ddof=1) if resid.size > 1 else 0.0
+
+            upper_bands[i] = reg_values[i] + 2.0 * std_err
+            lower_bands[i] = reg_values[i] - 2.0 * std_err
+        except Exception:
+            # leave NaNs for problematic windows
+            continue
+
+    # return DataFrame with the original series index so assignments align by label
     return pd.DataFrame({
         'slope': slopes,
         'intercept': intercepts,
@@ -104,36 +91,8 @@ def rolling_linear_regression(series: pd.Series, window: int) -> pd.DataFrame:
     }, index=series.index)
 
 
-def multiple_linear_regression(X: np.ndarray, y: np.ndarray) -> Tuple[np.ndarray, float]:
-    """
-    Multiple linear regression using sklearn's LinearRegression.
-    
-    Args:
-        X: Feature matrix (n_samples, n_features)
-        y: Target values
-        
-    Returns:
-        Tuple of (coefficients with intercept as first element, r_squared)
-    """
-    try:
-        # Fit sklearn LinearRegression
-        model = LinearRegression()
-        model.fit(X, y)
-        
-        # Combine intercept and coefficients [intercept, coef1, coef2, ...]
-        coefficients = np.concatenate([[model.intercept_], model.coef_])
-        
-        # Calculate R-squared using sklearn
-        y_pred = model.predict(X)
-        r_squared = r2_score(y, y_pred)
-        
-        return coefficients, r_squared
-    except Exception:
-        return np.zeros(X.shape[1] + 1), 0
-
-
 # =============================================================================
-# STRATEGY 1: LINEAR REGRESSION SLOPE
+# STRATEGIES 
 # =============================================================================
 
 class LinearRegressionSlope(BaseStrategy):
@@ -176,11 +135,6 @@ class LinearRegressionSlope(BaseStrategy):
         self.signals = df['signal']
         return df
 
-
-# =============================================================================
-# STRATEGY 2: LINEAR REGRESSION CHANNEL
-# =============================================================================
-
 class LinearRegressionChannel(BaseStrategy):
     """
     Linear Regression Channel Strategy (Mean Reversion).
@@ -219,14 +173,15 @@ class LinearRegressionChannel(BaseStrategy):
             # Calculate bands
             x = np.arange(self.window)
             y_pred = slope * x + intercept
-            std_err = np.std(y - y_pred)
+            std_err = np.std(y - y_pred, ddof=1) if y.size > 1 else 0.0
             
             upper_bands[i] = reg_val + self.num_std * std_err
             lower_bands[i] = reg_val - self.num_std * std_err
         
-        df['lr_channel_mid'] = reg_values
-        df['lr_channel_upper'] = upper_bands
-        df['lr_channel_lower'] = lower_bands
+        # convert numpy arrays to Series with DataFrame index to ensure alignment
+        df['lr_channel_mid'] = pd.Series(reg_values, index=df.index)
+        df['lr_channel_upper'] = pd.Series(upper_bands, index=df.index)
+        df['lr_channel_lower'] = pd.Series(lower_bands, index=df.index)
         
         # Calculate position within channel (0 = lower band, 1 = upper band)
         channel_width = df['lr_channel_upper'] - df['lr_channel_lower']
@@ -260,145 +215,17 @@ class LinearRegressionChannel(BaseStrategy):
                 
             signals.append(position)
         
-        df['signal'] = signals
+        # assign signals as a Series to preserve index alignment
+        df['signal'] = pd.Series(signals, index=df.index)
         self.signals = df['signal']
         return df
-
-
-# =============================================================================
-# STRATEGY 3: MULTI-FACTOR REGRESSION
-# =============================================================================
-
-class MultiFactorRegression(BaseStrategy):
-    """
-    Multi-Factor Regression Strategy.
     
-    Uses multiple technical indicators as features to predict next-day returns.
-    Generates signals based on predicted return direction.
-    
-    Features used:
-    - Momentum (past N-day returns)
-    - RSI
-    - Volume ratio
-    - Volatility
-    - Price distance from SMA
-    
-    Parameters:
-        lookback: Window for calculating features (default: 20)
-        train_window: Rolling training window (default: 252)
-        retrain_freq: Frequency to retrain model (default: 21)
-    """
-    
-    def __init__(self, lookback: int = 20, train_window: int = 252, retrain_freq: int = 21):
-        super().__init__("Multi-Factor Regression")
-        self.lookback = lookback
-        self.train_window = train_window
-        self.retrain_freq = retrain_freq
-        
-    def _create_features(self, df: pd.DataFrame) -> pd.DataFrame:
-        """Create feature matrix from price data."""
-        features = pd.DataFrame(index=df.index)
-        
-        # Feature 1: Momentum (past returns)
-        features['momentum_5'] = df['adj_close'].pct_change(5)
-        features['momentum_10'] = df['adj_close'].pct_change(10)
-        features['momentum_20'] = df['adj_close'].pct_change(20)
-        
-        # Feature 2: RSI
-        features['rsi'] = calculate_rsi(df['adj_close'], 14) / 100  # Normalize to 0-1
-        
-        # Feature 3: Volume ratio
-        features['volume_ratio'] = df['volume'] / df['volume'].rolling(20).mean()
-        
-        # Feature 4: Volatility (rolling std of returns)
-        returns = df['adj_close'].pct_change()
-        features['volatility'] = returns.rolling(20).std()
-        
-        # Feature 5: Price distance from SMA (normalized)
-        sma_50 = calculate_sma(df['adj_close'], 50)
-        features['sma_distance'] = (df['adj_close'] - sma_50) / sma_50
-        
-        # Feature 6: Trend strength (linear regression R²)
-        reg_stats = rolling_linear_regression(df['adj_close'], 20)
-        features['trend_strength'] = reg_stats['r_squared']
-        
-        # Target: Next day return
-        features['target'] = df['adj_close'].pct_change().shift(-1)
-        
-        return features
-    
-    def generate_signals(self, df: pd.DataFrame) -> pd.DataFrame:
-        df = df.copy()
-        
-        # Create features
-        features = self._create_features(df)
-        feature_cols = ['momentum_5', 'momentum_10', 'momentum_20', 
-                        'rsi', 'volume_ratio', 'volatility', 
-                        'sma_distance', 'trend_strength']
-        
-        # Initialize predictions
-        n = len(df)
-        predictions = np.full(n, np.nan)
-        coefficients = np.full((n, len(feature_cols) + 1), np.nan)
-        
-        # Rolling prediction with sklearn
-        min_train = self.train_window
-        last_train = 0
-        current_model = None
-        current_scaler = None
-        
-        for i in range(min_train, n - 1):
-            # Retrain model periodically
-            if current_model is None or (i - last_train) >= self.retrain_freq:
-                # Training data
-                train_start = max(0, i - self.train_window)
-                train_data = features.iloc[train_start:i].dropna()
-                
-                if len(train_data) < 50:  # Minimum samples
-                    continue
-                    
-                X_train = train_data[feature_cols].values
-                y_train = train_data['target'].values
-                
-                # Scale features for better regression performance
-                current_scaler = StandardScaler()
-                X_train_scaled = current_scaler.fit_transform(X_train)
-                
-                # Fit sklearn LinearRegression
-                current_model = LinearRegression()
-                current_model.fit(X_train_scaled, y_train)
-                last_train = i
-            
-            # Make prediction for next day
-            if current_model is not None and current_scaler is not None:
-                X_pred = features.iloc[i][feature_cols].values
-                if not np.any(np.isnan(X_pred)):
-                    X_pred_scaled = current_scaler.transform(X_pred.reshape(1, -1))
-                    predictions[i] = current_model.predict(X_pred_scaled)[0]
-                    # Store coefficients (intercept first, then scaled coefficients)
-                    coefficients[i] = np.concatenate([[current_model.intercept_], current_model.coef_])
-        
-        df['predicted_return'] = predictions
-        
-        # Store feature values
-        for col in feature_cols:
-            df[col] = features[col]
-        
-        # Signal: 1 if predicted return is positive
-        df['signal'] = np.where(df['predicted_return'] > 0, 1, 0)
-        
-        self.signals = df['signal']
-        self.coefficients = coefficients
-        return df
-
 
 __all__ = [
     # Helper functions
     'linear_regression',
     'rolling_linear_regression',
-    'multiple_linear_regression',
     # Strategies
     'LinearRegressionSlope',
-    'LinearRegressionChannel',
-    'MultiFactorRegression'
+    'LinearRegressionChannel'
 ]

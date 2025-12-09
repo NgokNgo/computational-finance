@@ -43,10 +43,8 @@ from .fundamental import (
 from .regression import (
     LinearRegressionSlope,
     LinearRegressionChannel,
-    MultiFactorRegression,
     linear_regression,
     rolling_linear_regression,
-    multiple_linear_regression
 )
 
 # Time-Series Strategies
@@ -98,10 +96,8 @@ __all__ = [
     # Regression
     'LinearRegressionSlope',
     'LinearRegressionChannel',
-    'MultiFactorRegression',
     'linear_regression',
     'rolling_linear_regression',
-    'multiple_linear_regression',
     # TimeSeries
     'ARIMAStrategy',
     'GARCHVolatilityStrategy',

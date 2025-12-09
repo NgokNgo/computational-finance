@@ -362,23 +362,17 @@ def optimize_onestock(train_df: pd.DataFrame,
     # Early stopping callback
     callbacks = []
     if early_stopping_rounds:
-        class EarlyStoppingCallback:
-            def __init__(self, patience: int):
-                self.patience = patience
-                self.best_value = float('-inf')
-                self.no_improve_count = 0
-                
-            def __call__(self, study):
-                if study.best_value > self.best_value:
-                    self.best_value = study.best_value
-                    self.no_improve_count = 0
+        class EarlyStopper:
+            def __init__(self, patience):
+                self.patience, self.best, self.count = patience, float('-inf'), 0
+            def __call__(self, study, trial):
+                if study.best_value > self.best:
+                    self.best, self.count = study.best_value, 0
                 else:
-                    self.no_improve_count += 1
-                    
-                if self.no_improve_count >= self.patience:
-                    study.stop()
-        
-        callbacks.append(EarlyStoppingCallback(early_stopping_rounds))
+                    self.count += 1
+                    if self.count >= self.patience:
+                        study.stop()
+        callbacks.append(EarlyStopper(early_stopping_rounds))
     
     # Create study
     study = optuna.create_study(
@@ -396,16 +390,11 @@ def optimize_onestock(train_df: pd.DataFrame,
         show_progress_bar=True
     )
     
-    # Get best params and calculate final scores
+    # Calculate final scores with best params
     best_params = study.best_params
-    
-    strategy_train = strategy_class(**best_params)
-    result_train = backtest_fn(train_df, strategy_train)
-    train_score = objective_fn(result_train)
-    
-    strategy_val = strategy_class(**best_params)
-    result_val = backtest_fn(val_df, strategy_val)
-    val_score = objective_fn(result_val)
+    result_train = backtest_fn(train_df, strategy_class(**best_params))
+    result_val = backtest_fn(val_df, strategy_class(**best_params))
+    train_score, val_score = objective_fn(result_train), objective_fn(result_val)
     
     return {
         'best_params': best_params,
@@ -428,9 +417,9 @@ def walk_forward_optimization(df: pd.DataFrame,
                                param_space: Dict[str, Tuple],
                                backtest_fn: Callable,
                                n_splits: int = 5,
-                               train_ratio: float = 0.7,
-                               val_ratio: float = 0.15,
-                               test_ratio: float = 0.15,
+                               train_ratio: float = 0.6,
+                               val_ratio: float = 0.2,
+                               test_ratio: float = 0.2,
                                n_trials: int = 50,
                                objective_fn: Callable = sharpe_objective,
                                min_trades: int = 5,
@@ -558,15 +547,18 @@ def walk_forward_optimization(df: pd.DataFrame,
         all_test_returns.extend(test_returns.tolist())
     
     # Calculate summary statistics
-    train_scores = [r['train_score'] for r in splits_results]
-    val_scores = [r['val_score'] for r in splits_results]
-    test_scores = [r['test_score'] for r in splits_results]
-    overfit_gaps = [r['overfit_gap'] for r in splits_results]
-    test_returns_list = [r['test_return'] for r in splits_results]
+    train_scores, val_scores, test_scores = [], [], []
+    overfit_gaps, test_returns_list = [], []
+    for r in splits_results:
+        train_scores.append(r['train_score'])
+        val_scores.append(r['val_score'])
+        test_scores.append(r['test_score'])
+        overfit_gaps.append(r['overfit_gap'])
+        test_returns_list.append(r['test_return'])
     
     # Combined test period performance
     combined_returns = pd.Series(all_test_returns)
-    combined_sharpe = combined_returns.mean() / combined_returns.std() * np.sqrt(252) if combined_returns.std() > 0 else 0
+    combined_sharpe = (combined_returns.mean() / combined_returns.std() * np.sqrt(252)) if combined_returns.std() > 0 else 0
     combined_total_return = (1 + combined_returns).prod() - 1
     
     summary = {
@@ -776,7 +768,7 @@ def optimize_universal(all_train_data: Dict[str, pd.DataFrame],
                 self.best_value = float('-inf')
                 self.no_improve_count = 0
                 
-            def __call__(self, study):
+            def __call__(self, study, trial):
                 if study.best_value > self.best_value:
                     self.best_value = study.best_value
                     self.no_improve_count = 0
@@ -804,22 +796,15 @@ def optimize_universal(all_train_data: Dict[str, pd.DataFrame],
         show_progress_bar=True
     )
     
-    # Get best params and calculate final scores per stock
+    # Calculate final scores per stock with best params
     best_params = study.best_params
-    
-    per_stock_results = {}
-    train_scores = []
-    val_scores = []
+    per_stock_results, train_scores, val_scores = {}, [], []
     
     for symbol in symbols:
         try:
-            strategy_train = strategy_class(**best_params)
-            result_train = backtest_fn(all_train_data[symbol], strategy_train)
-            train_score = objective_fn(result_train)
-            
-            strategy_val = strategy_class(**best_params)
-            result_val = backtest_fn(all_val_data[symbol], strategy_val)
-            val_score = objective_fn(result_val)
+            result_train = backtest_fn(all_train_data[symbol], strategy_class(**best_params))
+            result_val = backtest_fn(all_val_data[symbol], strategy_class(**best_params))
+            train_score, val_score = objective_fn(result_train), objective_fn(result_val)
             
             per_stock_results[symbol] = {
                 'train_score': train_score,
@@ -828,7 +813,6 @@ def optimize_universal(all_train_data: Dict[str, pd.DataFrame],
                 'train_trades': result_train['num_trades'],
                 'val_trades': result_val['num_trades']
             }
-            
             train_scores.append(train_score)
             val_scores.append(val_score)
         except:
@@ -848,68 +832,6 @@ def optimize_universal(all_train_data: Dict[str, pd.DataFrame],
 # =============================================================================
 # ROBUSTNESS ANALYSIS
 # =============================================================================
-
-def parameter_sensitivity_analysis(df: pd.DataFrame,
-                                    strategy_class: type,
-                                    base_params: Dict,
-                                    param_ranges: Dict[str, List],
-                                    backtest_fn: Callable,
-                                    objective_fn: Callable = sharpe_objective) -> pd.DataFrame:
-    """
-    Analyze how sensitive the strategy is to parameter changes.
-    
-    Args:
-        df: DataFrame with price data
-        strategy_class: Strategy class
-        base_params: Base parameter values
-        param_ranges: Dict of {param_name: [values_to_test]}
-        objective_fn: Objective function
-        
-    Returns:
-        DataFrame with sensitivity analysis results
-        
-    Example:
-        sensitivity = parameter_sensitivity_analysis(
-            df, PriceMomentum, 
-            {'short_window': 20, 'long_window': 50},
-            {'short_window': [10, 15, 20, 25, 30]}
-        )
-    """
-    results = []
-    
-    for param_name, values in param_ranges.items():
-        for value in values:
-            # Create params with this value changed
-            params = base_params.copy()
-            params[param_name] = value
-            
-            try:
-                strategy = strategy_class(**params)
-                result = backtest_fn(df, strategy)
-                score = objective_fn(result)
-                
-                results.append({
-                    'Parameter': param_name,
-                    'Value': value,
-                    'Sharpe': result['sharpe_ratio'],
-                    'Return': result['total_return'],
-                    'MaxDD': result['max_drawdown'],
-                    'Trades': result['num_trades'],
-                    'Score': score
-                })
-            except Exception as e:
-                results.append({
-                    'Parameter': param_name,
-                    'Value': value,
-                    'Sharpe': np.nan,
-                    'Return': np.nan,
-                    'MaxDD': np.nan,
-                    'Trades': np.nan,
-                    'Score': np.nan
-                })
-    
-    return pd.DataFrame(results)
-
 
 def bootstrap_performance(df: pd.DataFrame,
                           strategy_class: type,
@@ -937,14 +859,10 @@ def bootstrap_performance(df: pd.DataFrame,
     sample_size = int(n * sample_ratio)
     
     for _ in range(n_bootstrap):
-        # Sample with replacement (block bootstrap for time-series)
-        indices = np.random.choice(n, sample_size, replace=True)
-        indices = np.sort(indices)
+        indices = np.sort(np.random.choice(n, sample_size, replace=True))
         sample_df = df.iloc[indices].reset_index(drop=True)
-        
         try:
-            strategy = strategy_class(**params)
-            result = backtest_fn(sample_df, strategy)
+            result = backtest_fn(sample_df, strategy_class(**params))
             sharpes.append(result['sharpe_ratio'])
             returns.append(result['total_return'])
         except:
@@ -983,6 +901,5 @@ __all__ = [
     'walk_forward_optimization',
     
     # Robustness
-    'parameter_sensitivity_analysis',
     'bootstrap_performance',
 ]

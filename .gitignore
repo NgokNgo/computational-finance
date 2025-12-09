@@ -11,5 +11,6 @@ __pycache__/
 data/
 note.txt
 
-02LinnearModelStrategies.ipynb
+tm.py
 03FundamentalAnalysis.ipynb
+test_walk_forward.py

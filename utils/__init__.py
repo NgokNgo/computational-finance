@@ -98,8 +98,13 @@ from .optimize import (
     optimize_universal,
     walk_forward_optimization,
     # Robustness
-    parameter_sensitivity_analysis,
     bootstrap_performance,
+)
+
+from .visualize import (
+    plot_strategy_analysis,
+    print_backtest_results,
+    plot_comparison_charts,
 )
 
 __all__ = [
@@ -162,4 +167,8 @@ __all__ = [
     'walk_forward_optimization',
     'parameter_sensitivity_analysis',
     'bootstrap_performance',
+    # Visualization
+    'plot_strategy_analysis',
+    'print_backtest_results',
+    'plot_comparison_charts',
 ]
