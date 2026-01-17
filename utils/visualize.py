@@ -1,6 +1,6 @@
 import matplotlib.pyplot as plt
 
-def plot_strategy_analysis(df, result_df, backtest_result, strategy_name, indicator_col=None, indicator_name=None):
+def plot_strategy_analysis(df, result_df, backtest_result, title, indicator_col=None, indicator_name=None):
     """
     Common function to visualize strategy analysis.
     
@@ -8,7 +8,7 @@ def plot_strategy_analysis(df, result_df, backtest_result, strategy_name, indica
         df: Original dataframe with price data
         result_df: Dataframe with strategy signals
         backtest_result: Backtest result dictionary
-        strategy_name: Name of the strategy
+        title: Name of the strategy
         indicator_col: Column name for indicator to plot (optional)
         indicator_name: Display name for indicator (optional)
     """
@@ -26,7 +26,7 @@ def plot_strategy_analysis(df, result_df, backtest_result, strategy_name, indica
         axes[0].scatter(sell_signals['date'], sell_signals['adj_close'], 
                        marker='v', color='red', s=100, label='Sell Signal', zorder=5)
     
-    axes[0].set_title(f'{strategy_name} - Price & Signals', fontsize=12, fontweight='bold')
+    axes[0].set_title(f'{title} - Price & Signals', fontsize=12, fontweight='bold')
     axes[0].set_ylabel('Price')
     axes[0].legend(loc='upper left')
     axes[0].grid(True, alpha=0.3)
@@ -49,7 +49,7 @@ def plot_strategy_analysis(df, result_df, backtest_result, strategy_name, indica
     # Plot 3: Cumulative Returns
     data = backtest_result['data']
     axes[2].plot(data['date'], data['cumulative_market'], label='Buy & Hold', linewidth=1.5)
-    axes[2].plot(data['date'], data['cumulative_strategy_net'], label=strategy_name, linewidth=1.5)
+    axes[2].plot(data['date'], data['cumulative_strategy_net'], label=title, linewidth=1.5)
     axes[2].set_title('Cumulative Returns Comparison', fontsize=12, fontweight='bold')
     axes[2].set_ylabel('Cumulative Return')
     axes[2].set_xlabel('Date')
@@ -60,9 +60,9 @@ def plot_strategy_analysis(df, result_df, backtest_result, strategy_name, indica
     plt.show()
 
 
-def print_backtest_results(backtest_result, strategy_name):
+def print_backtest_results(backtest_result, title):
     """Print backtest results in a formatted way."""
-    print(f"\n{strategy_name}")
+    print(f"\n{title}")
     print("="*50)
     print(f"Total Return:   {backtest_result['total_return']:.2%}")
     print(f"Annual Return:  {backtest_result['annual_return']:.2%}")

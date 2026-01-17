@@ -211,116 +211,93 @@ def load_data_with_qlib(symbols: List[str] = None,
 # HISTORICAL DATA LOADING
 # =============================================================================
 
-def preprocess_historical_data(df: pd.DataFrame) -> pd.DataFrame:
+def load_historical_data(symbol: str, data_dir: str = "data/historical") -> pd.DataFrame:
     """
-    Preprocess historical data: handle missing values, outliers, and data quality.
-    
-    Args:
-        df: Raw DataFrame with OHLCV data
-        
-    Returns:
-        Cleaned DataFrame
-    """
-    df = df.copy()
-    
-    # Ensure date column is datetime
-    if 'date' in df.columns:
-        df['date'] = pd.to_datetime(df['date'])
-        df = df.sort_values('date').reset_index(drop=True)
-    
-    # Define numeric columns
-    numeric_cols = ['open', 'high', 'low', 'close', 'adj_close', 'volume', 'value']
-    
-    for col in numeric_cols:
-        if col in df.columns:
-            # Convert to numeric
-            df[col] = pd.to_numeric(df[col], errors='coerce')
-    
-    # Handle missing values
-    # 1. Forward fill for price columns (use previous day's value)
-    price_cols = ['open', 'high', 'low', 'close', 'adj_close']
-    for col in price_cols:
-        if col in df.columns:
-            df[col] = df[col].ffill()
-    
-    # 2. Fill volume with 0 if missing (no trading)
-    if 'volume' in df.columns:
-        df['volume'] = df['volume'].fillna(0)
-    
-    # 3. Handle outliers using IQR method for prices
-    for col in price_cols:
-        if col in df.columns:
-            Q1 = df[col].quantile(0.01)
-            Q3 = df[col].quantile(0.99)
-            df[col] = df[col].clip(lower=Q1, upper=Q3)
-    
-    # 4. Ensure OHLC consistency: High >= Open, Close, Low and Low <= Open, Close, High
-    if all(c in df.columns for c in ['open', 'high', 'low', 'close']):
-        df['high'] = df[['open', 'high', 'low', 'close']].max(axis=1)
-        df['low'] = df[['open', 'high', 'low', 'close']].min(axis=1)
-    
-    # 5. Drop rows where critical data is still missing
-    df = df.dropna(subset=['adj_close', 'close'])
-    
-    return df.reset_index(drop=True)
-
-
-def load_historical_data(symbol: str, data_dir: str = "data/historical", 
-                         preprocess: bool = True) -> pd.DataFrame:
-    """
-    Load historical OHLCV data for a symbol.
+    Load historical OHLCV data for a symbol (no preprocessing).
     
     Args:
         symbol: Stock ticker symbol (e.g., 'VNM', 'VIC')
         data_dir: Directory containing historical data files
-        preprocess: Whether to apply preprocessing (default True)
         
     Returns:
-        DataFrame with columns: date, adj_close, close, volume, open, high, low
+        DataFrame with columns: date, open, high, low, close, volume, adj_close
     """
     filepath = Path(data_dir) / f"{symbol}_ohlc.csv"
     if not filepath.exists():
         raise FileNotFoundError(f"Data file not found: {filepath}")
     
-    df = pd.read_csv(filepath, parse_dates=['date'])
+    df = pd.read_csv(filepath)
+    df['date'] = pd.to_datetime(df['date'])
     df = df.sort_values('date').reset_index(drop=True)
+    df.columns = df.columns.str.lower()
     
-    # Clean numeric columns
-    numeric_cols = ['adj_close', 'close', 'volume', 'value', 'open', 'high', 'low']
-    for col in numeric_cols:
-        if col in df.columns:
-            df[col] = pd.to_numeric(df[col], errors='coerce')
-    
-    # Apply preprocessing if requested
-    if preprocess:
-        df = preprocess_historical_data(df)
+    # Create adj_close if not present
+    if 'adj_close' not in df.columns:
+        df['adj_close'] = df['close']
     
     return df
 
 
-def load_all_historical(data_dir: str = "data/historical",
-                        preprocess: bool = True) -> Dict[str, pd.DataFrame]:
+def load_all_historical(data_dir: str = "data/historical") -> tuple:
     """
-    Load historical data for all available symbols.
+    Load historical data for all available symbols (no preprocessing).
     
     Args:
         data_dir: Directory containing historical data files
         
     Returns:
-        Dictionary mapping symbol -> DataFrame
+        Tuple of (symbols_data dict, summary_df DataFrame)
     """
     data_path = Path(data_dir)
     symbols_data = {}
     
-    for file in data_path.glob("*_ohlc.csv"):
-        symbol = file.stem.replace("_ohlc", "")
+    for csv_file in sorted(data_path.glob("*_ohlc.csv")):
+        symbol = csv_file.stem.replace("_ohlc", "")
         try:
-            symbols_data[symbol] = load_historical_data(symbol, data_dir, preprocess=preprocess)
+            df = pd.read_csv(csv_file)
+            df['date'] = pd.to_datetime(df['date'])
+            df = df.sort_values('date').reset_index(drop=True)
+            df.columns = df.columns.str.lower()
+            
+            # Create adj_close if not present
+            if 'adj_close' not in df.columns:
+                df['adj_close'] = df['close']
+            
+            symbols_data[symbol] = df
         except Exception as e:
             print(f"Error loading {symbol}: {e}")
     
-    print(f"✓ Loaded historical data for {len(symbols_data)} symbols")
-    return symbols_data
+    print(f"✓ Loaded {len(symbols_data)} stocks from {data_dir}")
+    print(f"Symbols: {', '.join(sorted(symbols_data.keys())[:10])}...")
+    
+    # Compute summary statistics
+    summary_stats = []
+    for symbol, df in symbols_data.items():
+        # Skip if not enough data or all NaN
+        if df['adj_close'].isna().all() or len(df.dropna(subset=['adj_close'])) < 2:
+            print(f"Skipping {symbol}: insufficient data")
+            continue
+        
+        # Remove NaN values for calculation
+        df_clean = df.dropna(subset=['adj_close'])
+        
+        total_return = (df_clean['adj_close'].iloc[-1] / df_clean['adj_close'].iloc[0]) - 1
+        volatility = df_clean['adj_close'].pct_change().std() * np.sqrt(252)  # Annualized volatility
+        summary_stats.append({
+            'symbol': symbol,
+            'total_return': total_return,
+            'volatility': volatility,
+            'start_date': df_clean['date'].iloc[0],
+            'end_date': df_clean['date'].iloc[-1],
+            'num_days': len(df_clean)
+        })
+    
+    summary_df = pd.DataFrame(summary_stats)
+    summary_df = summary_df.sort_values(by='num_days', ascending=False).reset_index(drop=True)
+    print("✓ Computed summary statistics for all stocks\n")
+    print(summary_df)
+    
+    return symbols_data, summary_df
 
 
 # =============================================================================
@@ -430,7 +407,6 @@ __all__ = [
     'load_data_with_qlib',
     'QLIB_AVAILABLE',
     # Historical
-    'preprocess_historical_data',
     'load_historical_data',
     'load_all_historical',
     # Fundamental

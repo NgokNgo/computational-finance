@@ -1,16 +1,20 @@
-# Pipeline 
-1. CRAWLING DATA: Use crawler to get data of stocks manually or use library `vnstock` for VN-Index stocks. (other markets: `yfinance` for US stocks, `binance` for crypto, ...)
-2. PREPROCESSING AND MANAGING DATA with `qlib` library
-3. ALPHA FACTORS CREATION AND BACKTEST
-4. PORTFOLIO MODELING AND BACKTEST
+survivorship bias (analysis both active and delisted stocks), 
+number of trading (swing trading, trend following),
+universe test,
 
+problems: xử lí stock giao dịch không liên tục, missing data nhiều ngày liên tục
 
 # TODO:
-- [ ] run model-based strategies and optimize hyperparameters with walk-forward validation
-- [ ] implement optimizer for portfolio construction 
+- [ ] sensitivity analysis of hyperparameters -> pick top strategies
+- [ ] WFA with top strategies -> pick robust strategies
+- [ ] implement more strategy (model-based)
 - [ ] combined alpha factors
-- [ ] implement more advanced strategies (XGBoost, LSTM,...)
+- [ ] risk management module
+- [ ] implement optimizer for portfolio
+
+bonus: 
 - [ ] Agent for strategy selection and portfolio rebalancing
+- [ ] implement more performance metrics (Calmar ratio, Sterling ratio, ...)
 
 # note for alpha combination:
 - low correlation 

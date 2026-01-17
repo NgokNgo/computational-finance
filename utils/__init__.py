@@ -18,7 +18,6 @@ from .data_loader import (
     # Historical Data
     load_historical_data,
     load_all_historical,
-    preprocess_historical_data,
     # Fundamental Data
     load_fundamental_data,
     load_all_fundamentals,
@@ -83,23 +82,28 @@ from .transforms import (
     print_data_quality_report,
 )
 
-from .optimize import (
-    # Data splitting
-    train_val_test_split,
-    split_by_date,
-    print_split_info,
-    # Objective functions
-    sharpe_objective,
-    calmar_objective,
-    sortino_objective,
-    combined_objective,
-    # Optimization with Validation
-    optimize_onestock,
-    optimize_universal,
-    walk_forward_optimization,
-    # Robustness
-    bootstrap_performance,
-)
+# Legacy optimization module (use utils.optimizer instead)
+try:
+    from .optimizer import (
+        # Data splitting
+        train_val_test_split,
+        split_by_date,
+        print_split_info,
+        # Objective functions
+        sharpe_objective,
+        calmar_objective,
+        sortino_objective,
+        combined_objective,
+        # Optimization with Validation
+        optimize_onestock,
+        optimize_universal,
+        walk_forward_optimization,
+        # Robustness
+        bootstrap_performance,
+    )
+except ImportError:
+    # optimize.py removed - use utils.optimizer instead
+    pass
 
 from .visualize import (
     plot_strategy_analysis,
@@ -107,11 +111,71 @@ from .visualize import (
     plot_comparison_charts,
 )
 
+from .risk_factors import (
+    # Risk Metrics
+    calculate_volatility as calc_volatility_rf,
+    calculate_max_drawdown as calc_max_drawdown_rf,
+    calculate_beta,
+    calculate_sharpe_ratio as calc_sharpe_rf,
+    calculate_sortino_ratio as calc_sortino_rf,
+    calculate_correlation_matrix,
+    # Portfolio Analysis
+    analyze_portfolio_risk,
+    # Allocation Methods
+    mean_variance_optimization,
+    risk_parity_allocation,
+    inverse_volatility_allocation,
+    # Visualization
+    plot_risk_analysis,
+    plot_correlation_heatmap,
+    plot_allocation_comparison,
+)
+
+# Lean-inspired Modular Optimizer (from optimizer submodule)
+try:
+    from .optimizer import (
+        # Enums
+        OptimizationStrategy,
+        ObjectiveDirection,
+        ConstraintType,
+        # Result Models
+        OptimizationResult,
+        OptimizationSummary,
+        OptimizerConfig,
+        # Constraints
+        Constraint,
+        TradeCountConstraint,
+        SharpeConstraint,
+        DrawdownConstraint,
+        ReturnConstraint,
+        # Builders
+        ObjectiveBuilder,
+        # Base Classes
+        OptimizerBase,
+        GridSearchOptimizer,
+        BayesianOptimizer,
+        OptunaOptimizer,
+        # Alternative Strategies
+        RandomSearchOptimizer,
+        GeneticAlgorithmOptimizer,
+        OptimizerFactory,
+        # Analysis
+        ParameterSensitivity,
+        ResultsAnalyzer,
+        RobustnessTester,
+        # High-level API
+        Optimizer,
+        quick_optimize,
+    )
+    
+    OPTIMIZER_AVAILABLE = True
+except ImportError:
+    OPTIMIZER_AVAILABLE = False
+
 __all__ = [
     # Data Loading
     'load_historical_data',
     'load_all_historical',
-    'preprocess_historical_data',
     'load_fundamental_data',
     'load_all_fundamentals',
     'merge_fundamental_data',
@@ -171,4 +235,44 @@ __all__ = [
     'plot_strategy_analysis',
     'print_backtest_results',
     'plot_comparison_charts',
+    # Risk Factors & Asset Allocation
+    'calc_volatility_rf',
+    'calc_max_drawdown_rf',
+    'calculate_beta',
+    'calc_sharpe_rf',
+    'calc_sortino_rf',
+    'calculate_correlation_matrix',
+    'analyze_portfolio_risk',
+    'mean_variance_optimization',
+    'risk_parity_allocation',
+    'inverse_volatility_allocation',
+    'plot_risk_analysis',
+    'plot_correlation_heatmap',
+    'plot_allocation_comparison',
+    # Lean-inspired Optimizer
+    'OptimizationStrategy',
+    'ObjectiveDirection',
+    'ConstraintType',
+    'OptimizationResult',
+    'OptimizationSummary',
+    'OptimizerConfig',
+    'Constraint',
+    'TradeCountConstraint',
+    'SharpeConstraint',
+    'DrawdownConstraint',
+    'ReturnConstraint',
+    'ObjectiveBuilder',
+    'OptimizerBase',
+    'GridSearchOptimizer',
+    'BayesianOptimizer',
+    'OptunaOptimizer',
+    'RandomSearchOptimizer',
+    'GeneticAlgorithmOptimizer',
+    'OptimizerFactory',
+    'ParameterSensitivity',
+    'ResultsAnalyzer',
+    'RobustnessTester',
+    'Optimizer',
+    'quick_optimize',
+    'OPTIMIZER_AVAILABLE',
 ]

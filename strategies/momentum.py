@@ -38,21 +38,46 @@ from utils.indicators import (
 
 
 # =============================================================================
+# HELPER FUNCTIONS
+# =============================================================================
+
+def _apply_mode_filter(signals: pd.Series, mode: str) -> pd.Series:
+    """
+    Apply mode filtering to base signals (-1/0/1).
+    
+    Args:
+        signals: Base signal series (-1/0/1)
+        mode: 'long_only', 'short_only', or 'long_short'
+    
+    Returns:
+        Filtered signal series based on mode
+    """
+    if mode == 'long_only':
+        return signals.apply(lambda x: max(x, 0))
+    elif mode == 'short_only':
+        return signals.apply(lambda x: min(x, 0))
+    return signals  # long_short: no filtering
+
+
+# =============================================================================
 # MOMENTUM STRATEGIES
 # =============================================================================
 
 
 class PriceMomentum(BaseStrategy):
     """
-    Classic Price Momentum Strategy. (long only)
-    Buy when price is above its N-period moving average.
-    Stronger signal when short MA crosses above long MA.
+    Classic Price Momentum Strategy.
+    Buy when short MA > long MA, Sell when short MA < long MA.
     """
     
-    def __init__(self, short_window: int = 20, long_window: int = 50):
-        super().__init__("Price Momentum")
+    def __init__(self, short_window: int = 20, long_window: int = 50, mode: str = 'long_only'):
+        super().__init__(f"Price Momentum ({mode})")
         self.short_window = short_window
         self.long_window = long_window
+        self.mode = mode
+        
+        if mode not in ['long_only', 'short_only', 'long_short']:
+            raise ValueError(f"Invalid mode: {mode}. Choose 'long_only', 'short_only', or 'long_short'")
         
     def generate_signals(self, df: pd.DataFrame) -> pd.DataFrame:
         df = df.copy()
@@ -60,10 +85,9 @@ class PriceMomentum(BaseStrategy):
         df['sma_short'] = calculate_sma(df['adj_close'], self.short_window)
         df['sma_long'] = calculate_sma(df['adj_close'], self.long_window)
         
-        # Signal: 1 (long) when short MA > long MA, 0 otherwise
-        df['signal'] = np.where(df['sma_short'] > df['sma_long'], 1, 0)
-        
-        # Crossover detection
+        df['signal'] = np.where(df['sma_short'] > df['sma_long'], 1, 
+                               np.where(df['sma_short'] < df['sma_long'], -1, 0))
+        df['signal'] = _apply_mode_filter(df['signal'], self.mode)
         df['crossover'] = df['signal'].diff()
         
         self.signals = df['signal']
@@ -73,23 +97,26 @@ class PriceMomentum(BaseStrategy):
 class ROCMomentum(BaseStrategy):
     """
     Rate of Change (ROC) Momentum Strategy.
-    Buy when ROC is positive and above threshold.
+    Buy when ROC > threshold, Sell when ROC < -threshold.
     """
     
-    def __init__(self, period: int = 12, threshold: float = 0.0):
-        super().__init__("ROC Momentum")
+    def __init__(self, period: int = 12, threshold: float = 0.0, mode: str = 'long_only'):
+        super().__init__(f"ROC Momentum ({mode})")
         self.period = period
         self.threshold = threshold
+        self.mode = mode
+        
+        if mode not in ['long_only', 'short_only', 'long_short']:
+            raise ValueError(f"Invalid mode: {mode}. Choose 'long_only', 'short_only', or 'long_short'")
         
     def generate_signals(self, df: pd.DataFrame) -> pd.DataFrame:
         df = df.copy()
         
-        # ROC = (Current Price - Price n periods ago) / Price n periods ago × 100
         df['roc'] = ((df['adj_close'] - df['adj_close'].shift(self.period)) / 
                      df['adj_close'].shift(self.period)) * 100
-        
-        # Signal: 1 when ROC > threshold
-        df['signal'] = np.where(df['roc'] > self.threshold, 1, 0)
+        df['signal'] = np.where(df['roc'] > self.threshold, 1,
+                               np.where(df['roc'] < -self.threshold, -1, 0))
+        df['signal'] = _apply_mode_filter(df['signal'], self.mode)
         
         self.signals = df['signal']
         return df
@@ -97,42 +124,35 @@ class ROCMomentum(BaseStrategy):
 
 class RSIMomentum(BaseStrategy):
     """
-    RSI-based Momentum Strategy.
+    RSI-based Momentum Strategy with flexible positioning modes.
     Long when RSI breaks out above oversold (crosses up from below 30 to above 30).
-    Exit/Short when RSI breaks down from overbought (crosses down from above 70 to below 70).
+    Short when RSI breaks down from overbought (crosses down from above 70 to below 70).
     """
     
-    def __init__(self, period: int = 14, oversold: int = 30, overbought: int = 70):
-        super().__init__("RSI Momentum")
+    def __init__(self, period: int = 14, oversold: int = 30, overbought: int = 70, mode: str = 'long_only'):
+        super().__init__(f"RSI Momentum ({mode})")
         self.period = period
         self.oversold = oversold
         self.overbought = overbought
+        self.mode = mode
+        
+        if mode not in ['long_only', 'short_only', 'long_short']:
+            raise ValueError(f"Invalid mode: {mode}. Choose 'long_only', 'short_only', or 'long_short'")
         
     def generate_signals(self, df: pd.DataFrame) -> pd.DataFrame:
         df = df.copy()
-        
         df['rsi'] = calculate_rsi(df['adj_close'], self.period)
         
-        # Signal logic:
-        # Long (1) when RSI crosses UP through oversold (breakout)
-        # Exit (0) when RSI crosses DOWN through overbought (breakdown)
-        # Hold previous position otherwise
-        df['signal'] = 0
-        position = 0
-        
+        signals = [0]
         for i in range(1, len(df)):
-            prev_rsi = df['rsi'].iloc[i - 1]
-            curr_rsi = df['rsi'].iloc[i]
-            
-            # Breakout: RSI crosses up from below oversold to above oversold
-            if prev_rsi < self.oversold and curr_rsi >= self.oversold:
-                position = 1  # Long signal
-            # Breakdown: RSI crosses down from above overbought to below overbought
-            elif prev_rsi > self.overbought and curr_rsi <= self.overbought:
-                position = 0  # Exit/Short signal
-                
-            df.loc[df.index[i], 'signal'] = position
+            pos = 0
+            if df['rsi'].iloc[i-1] < self.oversold and df['rsi'].iloc[i] >= self.oversold:
+                pos = 1
+            elif df['rsi'].iloc[i-1] > self.overbought and df['rsi'].iloc[i] <= self.overbought:
+                pos = -1 if self.mode in ['short_only', 'long_short'] else 0
+            signals.append(pos if self.mode == 'long_short' else max(pos, 0) if self.mode == 'long_only' else min(pos, 0))
         
+        df['signal'] = signals
         self.signals = df['signal']
         return df
 
@@ -140,14 +160,18 @@ class RSIMomentum(BaseStrategy):
 class MACDMomentum(BaseStrategy):
     """
     MACD-based Momentum Strategy.
-    Buy when MACD line crosses above signal line.
+    Buy when MACD > signal line, Sell when MACD < signal line.
     """
     
-    def __init__(self, fast: int = 12, slow: int = 26, signal: int = 9):
-        super().__init__("MACD Momentum")
+    def __init__(self, fast: int = 12, slow: int = 26, signal: int = 9, mode: str = 'long_only'):
+        super().__init__(f"MACD Momentum ({mode})")
         self.fast = fast
         self.slow = slow
         self.signal_period = signal
+        self.mode = mode
+        
+        if mode not in ['long_only', 'short_only', 'long_short']:
+            raise ValueError(f"Invalid mode: {mode}. Choose 'long_only', 'short_only', or 'long_short'")
         
     def generate_signals(self, df: pd.DataFrame) -> pd.DataFrame:
         df = df.copy()
@@ -156,8 +180,9 @@ class MACDMomentum(BaseStrategy):
             df['adj_close'], self.fast, self.slow, self.signal_period
         )
         
-        # Signal: 1 when MACD > Signal line
-        df['signal'] = np.where(df['macd'] > df['macd_signal'], 1, 0)
+        df['signal'] = np.where(df['macd'] > df['macd_signal'], 1,
+                               np.where(df['macd'] < df['macd_signal'], -1, 0))
+        df['signal'] = _apply_mode_filter(df['signal'], self.mode)
         
         self.signals = df['signal']
         return df
@@ -167,28 +192,29 @@ class VolumeWeightedMomentum(BaseStrategy):
     """
     Volume-Weighted Momentum Strategy.
     Combines price momentum with volume confirmation.
-    Strong momentum = Price up + Volume above average.
+    Strong momentum = Price momentum & Volume above average.
     """
     
-    def __init__(self, price_period: int = 20, volume_period: int = 20, volume_factor: float = 1.5):
-        super().__init__("Volume-Weighted Momentum")
+    def __init__(self, price_period: int = 20, volume_period: int = 20, volume_factor: float = 1.5, mode: str = 'long_only'):
+        super().__init__(f"Volume-Weighted Momentum ({mode})")
         self.price_period = price_period
         self.volume_period = volume_period
         self.volume_factor = volume_factor
+        self.mode = mode
+        
+        if mode not in ['long_only', 'short_only', 'long_short']:
+            raise ValueError(f"Invalid mode: {mode}. Choose 'long_only', 'short_only', or 'long_short'")
         
     def generate_signals(self, df: pd.DataFrame) -> pd.DataFrame:
         df = df.copy()
         
-        # Price momentum: current price vs SMA
         df['price_sma'] = calculate_sma(df['adj_close'], self.price_period)
-        df['price_momentum'] = df['adj_close'] > df['price_sma']
-        
-        # Volume confirmation: volume above average
         df['volume_sma'] = calculate_sma(df['volume'], self.volume_period)
-        df['volume_confirm'] = df['volume'] > df['volume_sma'] * self.volume_factor
+        vol_confirm = df['volume'] > df['volume_sma'] * self.volume_factor
         
-        # Signal: 1 when both conditions met
-        df['signal'] = np.where(df['price_momentum'] & df['volume_confirm'], 1, 0)
+        df['signal'] = np.where((df['adj_close'] > df['price_sma']) & vol_confirm, 1,
+                               np.where((df['adj_close'] < df['price_sma']) & vol_confirm, -1, 0))
+        df['signal'] = _apply_mode_filter(df['signal'], self.mode)
         
         self.signals = df['signal']
         return df
@@ -197,12 +223,16 @@ class VolumeWeightedMomentum(BaseStrategy):
 class OBVMomentum(BaseStrategy):
     """
     On-Balance Volume Momentum Strategy.
-    Buy when OBV trend is up (OBV > OBV SMA).
+    Buy when OBV > OBV SMA (accumulation), Sell when OBV < OBV SMA (distribution).
     """
     
-    def __init__(self, obv_period: int = 20):
-        super().__init__("OBV Momentum")
+    def __init__(self, obv_period: int = 20, mode: str = 'long_only'):
+        super().__init__(f"OBV Momentum ({mode})")
         self.obv_period = obv_period
+        self.mode = mode
+        
+        if mode not in ['long_only', 'short_only', 'long_short']:
+            raise ValueError(f"Invalid mode: {mode}. Choose 'long_only', 'short_only', or 'long_short'")
         
     def generate_signals(self, df: pd.DataFrame) -> pd.DataFrame:
         df = df.copy()
@@ -210,8 +240,9 @@ class OBVMomentum(BaseStrategy):
         df['obv'] = calculate_obv(df['adj_close'], df['volume'])
         df['obv_sma'] = calculate_sma(df['obv'], self.obv_period)
         
-        # Signal: 1 when OBV > OBV SMA (accumulation)
-        df['signal'] = np.where(df['obv'] > df['obv_sma'], 1, 0)
+        df['signal'] = np.where(df['obv'] > df['obv_sma'], 1,
+                               np.where(df['obv'] < df['obv_sma'], -1, 0))
+        df['signal'] = _apply_mode_filter(df['signal'], self.mode)
         
         self.signals = df['signal']
         return df
@@ -220,12 +251,16 @@ class OBVMomentum(BaseStrategy):
 class VPTMomentum(BaseStrategy):
     """
     Volume Price Trend Momentum Strategy.
-    Combines price change and volume into a cumulative indicator.
+    Buy when VPT > VPT SMA, Sell when VPT < VPT SMA.
     """
     
-    def __init__(self, vpt_period: int = 20):
-        super().__init__("VPT Momentum")
+    def __init__(self, vpt_period: int = 20, mode: str = 'long_only'):
+        super().__init__(f"VPT Momentum ({mode})")
         self.vpt_period = vpt_period
+        self.mode = mode
+        
+        if mode not in ['long_only', 'short_only', 'long_short']:
+            raise ValueError(f"Invalid mode: {mode}. Choose 'long_only', 'short_only', or 'long_short'")
         
     def generate_signals(self, df: pd.DataFrame) -> pd.DataFrame:
         df = df.copy()
@@ -233,8 +268,9 @@ class VPTMomentum(BaseStrategy):
         df['vpt'] = calculate_vpt(df['adj_close'], df['volume'])
         df['vpt_sma'] = calculate_sma(df['vpt'], self.vpt_period)
         
-        # Signal: 1 when VPT > VPT SMA
-        df['signal'] = np.where(df['vpt'] > df['vpt_sma'], 1, 0)
+        df['signal'] = np.where(df['vpt'] > df['vpt_sma'], 1,
+                               np.where(df['vpt'] < df['vpt_sma'], -1, 0))
+        df['signal'] = _apply_mode_filter(df['signal'], self.mode)
         
         self.signals = df['signal']
         return df
@@ -242,33 +278,31 @@ class VPTMomentum(BaseStrategy):
 
 class MFIMomentum(BaseStrategy):
     """
-    Money Flow Index Momentum Strategy.
+    Money Flow Index Momentum Strategy with flexible positioning modes.
     Volume-weighted RSI - buy in oversold, sell in overbought.
     """
     
-    def __init__(self, period: int = 14, oversold: int = 20, overbought: int = 80):
-        super().__init__("MFI Momentum")
+    def __init__(self, period: int = 14, oversold: int = 20, overbought: int = 80, mode: str = 'long_only'):
+        super().__init__(f"MFI Momentum ({mode})")
         self.period = period
         self.oversold = oversold
         self.overbought = overbought
+        self.mode = mode
+        
+        if mode not in ['long_only', 'short_only', 'long_short']:
+            raise ValueError(f"Invalid mode: {mode}. Choose 'long_only', 'short_only', or 'long_short'")
         
     def generate_signals(self, df: pd.DataFrame) -> pd.DataFrame:
         df = df.copy()
+        df['mfi'] = calculate_mfi(df['high'], df['low'], df['adj_close'], df['volume'], self.period)
         
-        df['mfi'] = calculate_mfi(df['high'], df['low'], df['adj_close'], 
-                                  df['volume'], self.period)
-        
-        # Signal logic similar to RSI
-        df['signal'] = 0
-        position = 0
-        
+        signals = [0]
         for i in range(1, len(df)):
-            if df['mfi'].iloc[i] < self.oversold:
-                position = 1
-            elif df['mfi'].iloc[i] > self.overbought:
-                position = 0
-            df.loc[df.index[i], 'signal'] = position
+            mfi = df['mfi'].iloc[i]
+            pos = 1 if mfi < self.oversold else (-1 if mfi > self.overbought and self.mode in ['short_only', 'long_short'] else 0)
+            signals.append(pos if self.mode == 'long_short' else max(pos, 0) if self.mode == 'long_only' else min(pos, 0))
         
+        df['signal'] = signals
         self.signals = df['signal']
         return df
 
@@ -317,30 +351,26 @@ class TripleMomentum(BaseStrategy):
     """
     Triple Momentum Strategy.
     Combines short, medium, and long-term momentum signals.
-    All three must agree for a position.
+    All three must agree for a position (all up or all down).
     """
     
-    def __init__(self, short: int = 21, medium: int = 63, long: int = 252):
-        super().__init__("Triple Momentum")
+    def __init__(self, short: int = 21, medium: int = 63, long: int = 252, mode: str = 'long_only'):
+        super().__init__(f"Triple Momentum ({mode})")
         self.short = short
         self.medium = medium
         self.long = long
+        self.mode = mode
+        
+        if mode not in ['long_only', 'short_only', 'long_short']:
+            raise ValueError(f"Invalid mode: {mode}. Choose 'long_only', 'short_only', or 'long_short'")
         
     def generate_signals(self, df: pd.DataFrame) -> pd.DataFrame:
         df = df.copy()
         
-        # Calculate returns over different periods
-        df['ret_short'] = df['adj_close'].pct_change(self.short)
-        df['ret_medium'] = df['adj_close'].pct_change(self.medium)
-        df['ret_long'] = df['adj_close'].pct_change(self.long)
-        
-        # All three must be positive
-        df['signal'] = np.where(
-            (df['ret_short'] > 0) & 
-            (df['ret_medium'] > 0) & 
-            (df['ret_long'] > 0), 
-            1, 0
-        )
+        r_s, r_m, r_l = df['adj_close'].pct_change(self.short), df['adj_close'].pct_change(self.medium), df['adj_close'].pct_change(self.long)
+        df['signal'] = np.where((r_s > 0) & (r_m > 0) & (r_l > 0), 1,
+                               np.where((r_s < 0) & (r_m < 0) & (r_l < 0), -1, 0))
+        df['signal'] = _apply_mode_filter(df['signal'], self.mode)
         
         self.signals = df['signal']
         return df
@@ -349,28 +379,27 @@ class TripleMomentum(BaseStrategy):
 class AcceleratingMomentum(BaseStrategy):
     """
     Accelerating Momentum Strategy.
-    Looks for stocks where momentum is increasing (momentum of momentum).
+    Looks for stocks where momentum is increasing/decreasing (momentum of momentum).
     """
     
-    def __init__(self, momentum_period: int = 20, acceleration_period: int = 5):
-        super().__init__("Accelerating Momentum")
+    def __init__(self, momentum_period: int = 20, acceleration_period: int = 5, mode: str = 'long_only'):
+        super().__init__(f"Accelerating Momentum ({mode})")
         self.momentum_period = momentum_period
         self.acceleration_period = acceleration_period
+        self.mode = mode
+        
+        if mode not in ['long_only', 'short_only', 'long_short']:
+            raise ValueError(f"Invalid mode: {mode}. Choose 'long_only', 'short_only', or 'long_short'")
         
     def generate_signals(self, df: pd.DataFrame) -> pd.DataFrame:
         df = df.copy()
         
-        # First-order momentum
         df['momentum'] = df['adj_close'].pct_change(self.momentum_period)
+        df['accel'] = df['momentum'].diff(self.acceleration_period)
         
-        # Second-order momentum (acceleration)
-        df['acceleration'] = df['momentum'].diff(self.acceleration_period)
-        
-        # Signal: positive momentum AND positive acceleration
-        df['signal'] = np.where(
-            (df['momentum'] > 0) & (df['acceleration'] > 0), 
-            1, 0
-        )
+        df['signal'] = np.where((df['momentum'] > 0) & (df['accel'] > 0), 1,
+                               np.where((df['momentum'] < 0) & (df['accel'] < 0), -1, 0))
+        df['signal'] = _apply_mode_filter(df['signal'], self.mode)
         
         self.signals = df['signal']
         return df
